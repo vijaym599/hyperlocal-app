@@ -3,11 +3,10 @@ import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, Loader2, Upload, Refr
 import { API_BASE_URL } from '../config';
 
 const SUBSCRIPTION_PLANS = [
-  { id: 'free', name: 'Free', price: 0, limit: 10, desc: 'Starter plan for small local vendors' },
-  { id: 'basic', name: 'Basic', price: 199, limit: 50, desc: 'Great for growing neighborhood stores' },
-  { id: 'pro', name: 'Pro', price: 499, limit: 200, desc: 'Ideal for established retail outlets' },
-  { id: 'advance', name: 'Advance', price: 999, limit: 500, desc: 'For large stores with wide catalog' },
-  { id: 'enterprise', name: 'Enterprise', price: 1999, limit: 999999, desc: 'Unlimited products & priority support' }
+  { id: 'basic', name: 'Basic', price: 20, limit: 10, desc: 'Great for growing neighborhood stores' },
+  { id: 'pro', name: 'Pro', price: 199, limit: 100, desc: 'Ideal for established retail outlets' },
+  { id: 'advance', name: 'Advance', price: 499, limit: 300, desc: 'For large stores with wide catalog' },
+  { id: 'enterprise', name: 'Enterprise', price: 999, limit: 999999, desc: 'Unlimited products & priority support' }
 ];
 
 // SHOP CATEGORIES LIST
@@ -33,7 +32,7 @@ const SHOP_CATEGORIES = [
   'Others'
 ];
 
-const DEFAULT_IMAGE = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
+const productFallbackImage = (product) => `https://loremflickr.com/640/480/${encodeURIComponent(`${product.brand || ''} ${product.name || 'local product'}`.trim())}`;
 const AVAILABILITY_OPTIONS = [
   { value: 'available', label: 'Available' },
   { value: 'low_stock', label: 'Low stock' },
@@ -51,6 +50,7 @@ const availabilityLabel = (status) => AVAILABILITY_OPTIONS.find((item) => item.v
 const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : 'choice');
   const [wizardStep, setWizardStep] = useState(1);
+  const [selectedSubscriptionPlan, setSelectedSubscriptionPlan] = useState(null);
 
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [shopData, setShopData] = useState(session?.shop || null);
@@ -71,16 +71,21 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     phone: '',
     whatsapp_number: '',
     opening_hours: '',
+    opening_time: '',
+    closing_time: '',
     google_map_link: '',
     latitude: '',
     longitude: '',
-    selected_plan: 'free'
+    selected_plan: 'basic'
   });
 
   const [newProduct, setNewProduct] = useState({ name: '', brand: '', description: '', price: '', image_url: '', availability_status: 'available' });
   const [editingProduct, setEditingProduct] = useState(null);
   const [editingShop, setEditingShop] = useState(false);
-  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', phone: '', whatsapp_number: '', opening_hours: '', latitude: '', longitude: '', google_map_link: '' });
+  const [billingOpen, setBillingOpen] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', phone: '', whatsapp_number: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
+  const [autoOpen, setAutoOpen] = useState(shopData?.is_open !== false);
 
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
   const maxProductsAllowed = activePlanDetails.limit;
@@ -88,6 +93,33 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     'Content-Type': 'application/json',
     ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {})
   });
+
+  const isOpenBySchedule = (opening, closing) => {
+    if (!opening || !closing) return null;
+    const minutes = (value) => { const [h, m] = String(value).slice(0, 5).split(':').map(Number); return h * 60 + m; };
+    const now = new Date(); const current = now.getHours() * 60 + now.getMinutes(); const start = minutes(opening); const end = minutes(closing);
+    return start <= end ? current >= start && current < end : current >= start || current < end;
+  };
+
+  useEffect(() => {
+    if (!shopData?.id) return undefined;
+    const sync = async () => { const state = isOpenBySchedule(shopData.opening_time, shopData.closing_time); const next = state === null ? shopData.is_open !== false : state; setAutoOpen(next); if (state !== null && next !== (shopData.is_open !== false)) { const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/open-status`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ is_open: next }) }); if (response.ok) { const data = await response.json(); setShopData(data.shop); } } };
+    sync(); const timer = window.setInterval(sync, 60000); return () => window.clearInterval(timer);
+  }, [shopData?.id, shopData?.opening_time, shopData?.closing_time, shopData?.is_open]);
+
+  const updateSubscription = async (action, plan = null) => {
+    if (!shopData?.id) return;
+    if (action === 'cancel' && !window.confirm('Cancel automatic renewal? Your current plan stays active until its billing period ends.')) return;
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/subscription`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ action, plan, payment_id: action === 'cancel' ? undefined : `MOCK_PAY_${Date.now()}` }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update subscription.');
+      setShopData(data.shop);
+      const updatedSession = { ...session, shop: data.shop };
+      localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession)); onLoginSuccess?.(updatedSession);
+    } catch (error) { alert(error.message); } finally { setLoading(false); }
+  };
 
   const fetchProductsFromBackend = async (shopId) => {
     if (!shopId) return;
@@ -126,6 +158,29 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleBulkFile = (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !shopData?.id) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const lines = String(reader.result || '').split(/\r?\n/).filter(Boolean);
+        const headers = lines.shift().split(',').map((value) => value.trim().toLowerCase());
+        if (!headers.includes('name') || !headers.includes('price')) throw new Error('CSV must include name and price columns.');
+        const productsToUpload = lines.map((line) => {
+          const values = line.split(',').map((value) => value.trim());
+          return Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
+        }).filter((product) => product.name);
+        if (!productsToUpload.length) throw new Error('No products found in this CSV.');
+        setLoading(true); setBulkMessage('Uploading products…');
+        const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/products/bulk`, { method: 'POST', headers: authenticatedJsonHeaders(), body: JSON.stringify({ products: productsToUpload }) });
+        const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Bulk upload failed.');
+        setBulkMessage(data.message); await fetchProductsFromBackend(shopData.id);
+      } catch (error) { setBulkMessage(error.message); } finally { setLoading(false); event.target.value = ''; }
+    };
+    reader.readAsText(file);
   };
 
   const handleGetCurrentLocation = () => {
@@ -336,6 +391,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       phone: shopData?.phone || '',
       whatsapp_number: shopData?.whatsapp_number || '',
       opening_hours: shopData?.opening_hours || '',
+      opening_time: shopData?.opening_time ? String(shopData.opening_time).slice(0, 5) : '',
+      closing_time: shopData?.closing_time ? String(shopData.closing_time).slice(0, 5) : '',
       latitude: shopData?.latitude ?? '',
       longitude: shopData?.longitude ?? '',
       google_map_link: shopData?.google_map_link || ''
@@ -467,6 +524,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <input type="tel" required placeholder="Call number with country code, e.g. +919876543210 *" value={regForm.phone} onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <input type="tel" placeholder="WhatsApp number (optional)" value={regForm.whatsapp_number} onChange={(e) => setRegForm({ ...regForm, whatsapp_number: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <input type="text" placeholder="Opening hours, e.g. 9 AM – 9 PM" value={regForm.opening_hours} onChange={(e) => setRegForm({ ...regForm, opening_hours: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={regForm.opening_time} onChange={(e) => setRegForm({ ...regForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={regForm.closing_time} onChange={(e) => setRegForm({ ...regForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
             
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <div className="flex justify-between items-center">
@@ -516,15 +574,16 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                   </div>
                   <button 
                     type="button" 
-                    onClick={() => handleRegisterSubmit(plan.id, plan.price === 0 ? null : 'MOCK_PAY_' + Date.now())} 
+                    onClick={() => setSelectedSubscriptionPlan(plan)}
                     disabled={loading} 
                     className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1"
                   >
-                    {loading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Creating Shop...</> : `Select ${plan.name}`}
+                    {selectedSubscriptionPlan?.id === plan.id ? 'Selected' : `Choose ${plan.name}`}
                   </button>
                 </div>
               ))}
             </div>
+            {selectedSubscriptionPlan && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-bold text-slate-800">Selected: {selectedSubscriptionPlan.name} — ₹{selectedSubscriptionPlan.price}/month</p><p className="mt-1 text-xs text-slate-600">Confirm to create your shop with this subscription. You can upgrade, switch, or cancel renewal later from Billing.</p><button type="button" disabled={loading} onClick={() => handleRegisterSubmit(selectedSubscriptionPlan.id, `MOCK_PAY_${Date.now()}`)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating shop…</> : `Confirm ${selectedSubscriptionPlan.name} & create shop`}</button><p className="mt-2 text-center text-[11px] text-slate-500">Demo payment confirmation — connect a real gateway before live payments.</p></div>}
           </div>
         )}
       </div>
@@ -554,13 +613,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleOpenStatus} disabled={loading} className={`p-2 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer ${shopData?.is_open !== false ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-amber-500 hover:bg-amber-400 text-white'}`} title="Update open status">
-            <span className="hidden sm:inline">{shopData?.is_open !== false ? 'Open now' : 'Closed'}</span>
-            <span className="sm:hidden">{shopData?.is_open !== false ? 'Open' : 'Closed'}</span>
-          </button>
+          <span className={`rounded-xl px-3 py-2 text-xs font-bold ${autoOpen ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>{autoOpen ? 'Auto: Open now' : 'Auto: Closed'}</span>
           <button onClick={openShopEditor} className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
             <Pencil className="w-4 h-4" /><span className="hidden sm:inline">Edit Shop</span>
           </button>
+          <button onClick={() => setBillingOpen(!billingOpen)} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition text-xs font-semibold">Billing</button>
           <button 
             onClick={() => fetchProductsFromBackend(shopData?.id)} 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
@@ -582,6 +639,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       </div>
 
+      {billingOpen && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p><button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : 'Upgrade / switch'}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
+
       {editingShop && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
           <div className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
@@ -592,6 +651,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               <textarea rows="2" value={shopForm.address} onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })} placeholder="Shop address" className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><input type="tel" value={shopForm.phone} onChange={(e) => setShopForm({ ...shopForm, phone: e.target.value })} placeholder="Call number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="tel" value={shopForm.whatsapp_number} onChange={(e) => setShopForm({ ...shopForm, whatsapp_number: e.target.value })} placeholder="WhatsApp number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
               <input type="text" value={shopForm.opening_hours} onChange={(e) => setShopForm({ ...shopForm, opening_hours: e.target.value })} placeholder="Opening hours" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={shopForm.opening_time} onChange={(e) => setShopForm({ ...shopForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={shopForm.closing_time} onChange={(e) => setShopForm({ ...shopForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
               <div className="grid grid-cols-2 gap-3"><input type="number" step="any" value={shopForm.latitude} onChange={(e) => setShopForm({ ...shopForm, latitude: e.target.value })} placeholder="Latitude" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="number" step="any" value={shopForm.longitude} onChange={(e) => setShopForm({ ...shopForm, longitude: e.target.value })} placeholder="Longitude" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
               <input type="url" value={shopForm.google_map_link} onChange={(e) => setShopForm({ ...shopForm, google_map_link: e.target.value })} placeholder="Google Maps link (optional)" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="flex gap-2 pt-2"><button type="button" onClick={() => setEditingShop(false)} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-600">Cancel</button><button disabled={loading} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white">{loading ? 'Saving...' : 'Save details'}</button></div>
@@ -659,6 +719,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <button type="submit" disabled={loading} className="w-full py-2.5 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-2">
               {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Adding Product...</> : 'Add Product'}
             </button>
+            <div className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-800">Bulk upload products (CSV)</p><p className="mt-1 text-[11px] text-slate-600">Create an Excel/Google Sheet file, then download it as <strong>.csv</strong>.</p><ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-slate-600"><li>First row must contain the column titles in this order.</li><li>Each next row is one product.</li><li><strong>name</strong> and <strong>price</strong> are required; all other fields are optional.</li></ol><div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">CSV example</p><pre className="text-[10px] leading-5 text-slate-700">name,price,brand,description,availability_status,image_url{`\n`}Rice Bag,850,India Gate,5 kg basmati rice,available,{`\n`}Milk,32,Aavin,Fresh milk,low_stock,</pre></div><a download="nearbuy-products-sample.csv" href={'data:text/csv;charset=utf-8,' + encodeURIComponent('name,price,brand,description,availability_status,image_url\nRice Bag,850,India Gate,5 kg basmati rice,available,\nMilk,32,Aavin,Fresh milk,low_stock,')} className="mt-3 block text-center text-[11px] font-bold text-emerald-700 hover:underline">Download sample CSV</a><label className="mt-2 flex cursor-pointer items-center justify-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-bold text-emerald-700"><Upload className="h-3.5 w-3.5" />Choose CSV file<input type="file" accept=".csv,text/csv" onChange={handleBulkFile} className="hidden" /></label>{bulkMessage && <p className="mt-2 text-[11px] font-medium text-slate-600">{bulkMessage}</p>}</div>
           </form>
         </div>
 
@@ -681,10 +742,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 <div key={p.id} className="flex items-center justify-between p-3 border border-slate-200 rounded-xl hover:border-emerald-300 transition bg-white shadow-2xs">
                   <div className="flex items-center gap-3 overflow-hidden">
                     <img 
-                      src={p.image_url && p.image_url.trim() !== '' ? p.image_url : DEFAULT_IMAGE} 
+                      src={p.image_url && p.image_url.trim() !== '' ? p.image_url : productFallbackImage(p)}
                       alt={p.name} 
                       className="w-16 h-16 object-cover rounded-lg bg-slate-100 border border-slate-100 shrink-0" 
-                      onError={(e) => { e.target.src = DEFAULT_IMAGE; }}
+                      onError={(e) => { e.target.src = productFallbackImage(p); }}
                     />
                     <div className="overflow-hidden">
                       <h4 className="font-bold text-sm text-slate-800 truncate">{p.name}</h4>

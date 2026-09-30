@@ -33,14 +33,15 @@ const rateLimit = (limit, windowMs) => (req, res, next) => {
 app.use('/api/auth', rateLimit(20, 15 * 60 * 1000));
 
 const SUBSCRIPTION_LIMITS = {
-  free: 10,
-  basic: 50,
-  pro: 200,
-  advance: 500,
+  basic: 10,
+  pro: 100,
+  advance: 300,
   enterprise: 999999
 };
+const VERIFIED_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const AVAILABILITY_STATUSES = new Set(['available', 'low_stock', 'out_of_stock']);
+const productFallbackImage = (name, brand = '') => `https://loremflickr.com/640/480/${encodeURIComponent(`${brand || ''} ${name || 'local product'}`.trim())}`;
 
 const createToken = (user) => {
   if (!process.env.JWT_SECRET) {
@@ -48,11 +49,18 @@ const createToken = (user) => {
   }
 
   return jwt.sign(
-    { userId: user.id, email: user.email, isAdmin: Boolean(user.is_admin) },
+    { userId: user.id, email: user.email, userType: user.user_type || 'customer', isAdmin: Boolean(user.is_admin) },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
 };
+
+const recordActivity = (userId, actionType, { shopId = null, productId = null, details = {} }) =>
+  pool.query(
+    `INSERT INTO user_activities (user_id, action_type, shop_id, product_id, details)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId, actionType, shopId, productId, JSON.stringify(details)]
+  );
 
 const isShopOwner = async (shopId, userId) => {
   const result = await pool.query(
@@ -65,6 +73,16 @@ const isShopOwner = async (shopId, userId) => {
 const isAdmin = async (userId) => {
   const result = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
   return Boolean(result.rows[0]?.is_admin);
+};
+
+const requireCustomer = async (req, res, next) => {
+  try {
+    const result = await pool.query('SELECT user_type FROM users WHERE id = $1', [req.user.userId]);
+    if (result.rows[0]?.user_type !== 'customer') return res.status(403).json({ error: 'This action is available only to customer accounts.' });
+    return next();
+  } catch {
+    return res.status(500).json({ error: 'Unable to verify account access.' });
+  }
 };
 
 app.get('/api/location/reverse', rateLimit(30, 60 * 60 * 1000), async (req, res) => {
@@ -121,12 +139,17 @@ app.post('/api/auth/register-shop', async (req, res) => {
       phone,
       whatsapp_number,
       opening_hours,
+      opening_time,
+      closing_time,
       selected_plan, 
       payment_id 
     } = req.body;
 
     if (!email || !password || !shop_name) {
       return res.status(400).json({ error: 'Email, Password, and Shop Name are required!' });
+    }
+    if (!Object.hasOwn(SUBSCRIPTION_LIMITS, selected_plan) || !payment_id) {
+      return res.status(400).json({ error: 'Choose one of the four subscription plans to create a shop account.' });
     }
 
     if (password.length < 8) {
@@ -151,9 +174,9 @@ app.post('/api/auth/register-shop', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const userResult = await client.query(
-      `INSERT INTO users (owner_name, email, password) 
-       VALUES ($1, $2, $3) 
-       RETURNING id, email, owner_name, is_admin`,
+      `INSERT INTO users (owner_name, email, password, user_type)
+       VALUES ($1, $2, $3, 'shop_owner')
+       RETURNING id, email, owner_name, user_type, is_admin`,
       [owner_name?.trim() || '', cleanEmail, passwordHash]
     );
 
@@ -161,8 +184,8 @@ app.post('/api/auth/register-shop', async (req, res) => {
 
     const shopResult = await client.query(
       `INSERT INTO shops
-        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, subscription_plan, payment_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END)
        RETURNING *`,
       [
         newUser.id,
@@ -175,8 +198,11 @@ app.post('/api/auth/register-shop', async (req, res) => {
         phone?.trim() || null,
         whatsapp_number?.trim() || null,
         opening_hours?.trim() || null,
+        opening_time || null,
+        closing_time || null,
         selected_plan || 'free',
-        payment_id || null
+        payment_id || null,
+        VERIFIED_SUBSCRIPTION_PLANS.has(selected_plan)
       ]
     );
 
@@ -198,6 +224,33 @@ app.post('/api/auth/register-shop', async (req, res) => {
     client?.release();
   }
 });
+
+// Customer accounts are independent from shop-owner accounts.
+const registerCustomer = async (req, res) => {
+  try {
+    if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'Authentication is not configured on the server.' });
+    const name = String(req.body?.name || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!name || !email || password.length < 8) return res.status(400).json({ error: 'Name, email, and a password of at least 8 characters are required.' });
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length) return res.status(409).json({ error: 'This email is already registered. Please sign in.' });
+    const result = await pool.query(
+      `INSERT INTO users (owner_name, email, password, user_type) VALUES ($1, $2, $3, 'customer')
+       RETURNING id, owner_name, email, user_type, is_admin`,
+      [name, email, await bcrypt.hash(password, 12)]
+    );
+    const user = result.rows[0];
+    return res.status(201).json({ message: 'Customer account created.', token: createToken(user), user, shop: null });
+  } catch (err) {
+    console.error('Customer registration error:', err);
+    return res.status(500).json({ error: 'Unable to create your account.' });
+  }
+};
+
+app.post('/api/auth/register-customer', registerCustomer);
+// Retain compatibility with an earlier client typo while new clients use the route above.
+app.post('/api/auth/register-custormer', registerCustomer);
 
 // ==========================================
 // 2. LOGIN API (PostgreSQL)
@@ -237,11 +290,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     const shopRes = await pool.query('SELECT * FROM shops WHERE user_id = $1', [user.id]);
     const shop = shopRes.rows[0] || null;
+    if (shop && user.user_type !== 'shop_owner') {
+      user.user_type = 'shop_owner';
+      await pool.query("UPDATE users SET user_type = 'shop_owner' WHERE id = $1", [user.id]);
+    }
 
     return res.json({
       message: 'Login successful!',
       token: createToken(user),
-      user: { id: user.id, email: user.email, owner_name: user.owner_name, is_admin: user.is_admin },
+      user: { id: user.id, email: user.email, owner_name: user.owner_name, user_type: user.user_type || (shop ? 'shop_owner' : 'customer'), is_admin: user.is_admin },
       shop: shop
     });
 
@@ -264,6 +321,49 @@ app.get('/api/shops/:shopId/products', async (req, res) => {
     console.error('Fetch Products Error:', err);
     return res.status(500).json({ error: 'Failed to fetch products from PostgreSQL.' });
   }
+});
+
+// Public shop portfolio: a complete catalog for one shop, independent of nearby search filters.
+app.get('/api/shops/:shopId/portfolio', async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!shopId) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    const [shopResult, productsResult] = await Promise.all([
+      pool.query(
+        `SELECT s.*, COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM shop_reviews WHERE shop_id = s.id), 0) AS average_rating,
+                (SELECT COUNT(*)::int FROM shop_reviews WHERE shop_id = s.id) AS review_count
+         FROM shops s WHERE s.id = $1`, [shopId]
+      ),
+      pool.query(
+        `SELECT p.*, COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
+                (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count
+         FROM products p WHERE p.shop_id = $1 ORDER BY p.name ASC`, [shopId]
+      )
+    ]);
+    if (!shopResult.rows.length) return res.status(404).json({ error: 'Shop not found.' });
+    return res.json({ shop: shopResult.rows[0], products: productsResult.rows });
+  } catch (err) {
+    console.error('Shop portfolio error:', err);
+    return res.status(500).json({ error: 'Unable to load this shop portfolio.' });
+  }
+});
+
+app.patch('/api/shops/:shopId/subscription', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  const { action, plan, payment_id } = req.body || {};
+  if (!shopId || !['change', 'cancel', 'resume'].includes(action)) return res.status(400).json({ error: 'A valid subscription action is required.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only manage your own subscription.' });
+    let result;
+    if (action === 'cancel') {
+      result = await pool.query(`UPDATE shops SET subscription_status = 'cancelled', subscription_cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`, [shopId]);
+    } else {
+      if (!Object.hasOwn(SUBSCRIPTION_LIMITS, plan) || !payment_id) return res.status(400).json({ error: 'Choose a valid paid plan and complete payment.' });
+      const verified = VERIFIED_SUBSCRIPTION_PLANS.has(plan);
+      result = await pool.query(`UPDATE shops SET subscription_plan = $1, payment_id = $2, subscription_status = 'active', subscription_cancelled_at = NULL, is_verified = $3, verified_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`, [plan, payment_id, verified, shopId]);
+    }
+    return res.json({ message: action === 'cancel' ? 'Subscription renewal cancelled.' : 'Subscription updated.', shop: result.rows[0] });
+  } catch (err) { return res.status(500).json({ error: 'Unable to update subscription.' }); }
 });
 
 // ==========================================
@@ -302,8 +402,7 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
       return res.status(400).json({ error: `Limit reached! Your current plan allows only ${planLimit} products.` });
     }
 
-    const defaultImg = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
-    const prodImg = (image_url && image_url.trim() !== '') ? image_url : defaultImg;
+    const prodImg = (image_url && image_url.trim() !== '') ? image_url : productFallbackImage(name, brand);
 
     const newProductRes = await pool.query(
       `INSERT INTO products
@@ -329,12 +428,35 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
   }
 });
 
+app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId); const incoming = Array.isArray(req.body?.products) ? req.body.products : [];
+  if (!shopId || !incoming.length || incoming.length > 200) return res.status(400).json({ error: 'Upload between 1 and 200 products.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only manage products for your own shop.' });
+    const shop = (await pool.query('SELECT subscription_plan FROM shops WHERE id = $1', [shopId])).rows[0];
+    if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+    const existingCount = Number((await pool.query('SELECT COUNT(*)::int AS count FROM products WHERE shop_id = $1', [shopId])).rows[0].count);
+    const limit = SUBSCRIPTION_LIMITS[shop.subscription_plan] || 10;
+    if (existingCount + incoming.length > limit) return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
+    const values = incoming.map((item, index) => {
+      const name = String(item.name || '').trim(); const price = Number(item.price);
+      if (!name || !Number.isFinite(price) || price < 0) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
+      const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw new Error(`Row ${index + 1} has an invalid availability status.`);
+      const brand = String(item.brand || '').trim(); const image = String(item.image_url || '').trim() || productFallbackImage(name, brand);
+      return [shopId, name, String(item.description || '').trim() || null, brand || null, price, image, status];
+    });
+    const placeholders = values.map((_, index) => `($${index * 7 + 1}, $${index * 7 + 2}, $${index * 7 + 3}, $${index * 7 + 4}, $${index * 7 + 5}, $${index * 7 + 6}, $${index * 7 + 7})`).join(', ');
+    const result = await pool.query(`INSERT INTO products (shop_id, name, description, brand, price, image_url, availability_status) VALUES ${placeholders} RETURNING *`, values.flat());
+    return res.status(201).json({ message: `${result.rows.length} products added.`, products: result.rows });
+  } catch (err) { return res.status(400).json({ error: err.message || 'Bulk upload failed.' }); }
+});
+
 // ==========================================
 // 5. UPDATE SHOP DETAILS
 // ==========================================
 app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
-  const { name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours } = req.body;
+  const { name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time } = req.body;
 
   if (!shopId || !name?.trim() || !category) {
     return res.status(400).json({ error: 'Shop name and category are required.' });
@@ -360,8 +482,10 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
            phone = COALESCE($7, phone),
            whatsapp_number = COALESCE($8, whatsapp_number),
            opening_hours = COALESCE($9, opening_hours),
+           opening_time = $10,
+           closing_time = $11,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $10
+       WHERE id = $12
        RETURNING *`,
       [
         name.trim(),
@@ -373,6 +497,8 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
         phone?.trim() || null,
         whatsapp_number?.trim() || null,
         opening_hours?.trim() || null,
+        opening_time || null,
+        closing_time || null,
         shopId
       ]
     );
@@ -518,37 +644,70 @@ app.get('/api/reviews/:target/:id', async (req, res) => {
   } catch (err) { return res.status(500).json({ error: 'Unable to load reviews.' }); }
 });
 
-app.post('/api/reviews/:target/:id', authenticate, async (req, res) => {
+app.post('/api/reviews/:target/:id', authenticate, requireCustomer, async (req, res) => {
   const { target } = req.params;
   const id = Number(req.params.id); const rating = Number(req.body?.rating); const comment = String(req.body?.comment || '').trim();
   if (!id || !['shop', 'product'].includes(target) || !Number.isInteger(rating) || rating < 1 || rating > 5 || comment.length > 500) return res.status(400).json({ error: 'Provide a rating from 1 to 5 and a review under 500 characters.' });
   const table = target === 'shop' ? 'shop_reviews' : 'product_reviews'; const column = target === 'shop' ? 'shop_id' : 'product_id';
   try {
     const result = await pool.query(`INSERT INTO ${table} (${column}, user_id, rating, comment) VALUES ($1, $2, $3, $4) ON CONFLICT (${column}, user_id) DO UPDATE SET rating = EXCLUDED.rating, comment = EXCLUDED.comment, updated_at = CURRENT_TIMESTAMP RETURNING id, rating, comment`, [id, req.user.userId, rating, comment || null]);
+    const productId = target === 'product' ? id : null;
+    const shopId = target === 'shop' ? id : (await pool.query('SELECT shop_id FROM products WHERE id = $1', [id])).rows[0]?.shop_id || null;
+    await recordActivity(req.user.userId, 'review', { shopId, productId, details: { target, rating } });
     return res.status(201).json({ message: 'Review saved.', review: result.rows[0] });
   } catch (err) { return res.status(500).json({ error: 'Unable to save review.' }); }
+});
+
+app.post('/api/activity/:action', authenticate, requireCustomer, async (req, res) => {
+  const action = req.params.action;
+  const shopId = Number(req.body?.shop_id) || null;
+  const productId = Number(req.body?.product_id) || null;
+  if (!['call', 'directions'].includes(action) || !shopId) return res.status(400).json({ error: 'A valid shop activity is required.' });
+  try {
+    const shop = await pool.query('SELECT id, name FROM shops WHERE id = $1', [shopId]);
+    if (!shop.rows.length) return res.status(404).json({ error: 'Shop not found.' });
+    await recordActivity(req.user.userId, action, { shopId, productId, details: { shop_name: shop.rows[0].name } });
+    return res.status(201).json({ message: 'Activity saved.' });
+  } catch (err) { return res.status(500).json({ error: 'Unable to save activity.' }); }
+});
+
+app.get('/api/activity', authenticate, requireCustomer, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT a.id, a.action_type, a.created_at, a.details, s.id AS shop_id, s.name AS shop_name,
+              p.id AS product_id, p.name AS product_name
+       FROM user_activities a
+       LEFT JOIN shops s ON s.id = a.shop_id
+       LEFT JOIN products p ON p.id = a.product_id
+       WHERE a.user_id = $1 ORDER BY a.created_at DESC LIMIT 100`,
+      [req.user.userId]
+    );
+    return res.json({ activities: result.rows });
+  } catch (err) { return res.status(500).json({ error: 'Unable to load activity.' }); }
 });
 
 // ==========================================
 // 7. PRODUCT-FIRST NEARBY SEARCH
 // ==========================================
 app.get('/api/search/products', async (req, res) => {
-  const { lat, lng, query = '', radius = '10', availability = 'all' } = req.query;
+  const { lat, lng, query = '', availability = 'all' } = req.query;
   const latitude = Number(lat);
   const longitude = Number(lng);
-  const requestedRadius = Number(radius);
+  const radiusValue = String(req.query.radius || '').trim();
+  const requestedRadius = radiusValue ? Number(radiusValue) : null;
 
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     return res.status(400).json({ error: 'Valid latitude and longitude are required.' });
   }
-  if (!Number.isFinite(requestedRadius) || requestedRadius <= 0) {
+  if (requestedRadius !== null && (!Number.isFinite(requestedRadius) || requestedRadius <= 0)) {
     return res.status(400).json({ error: 'Radius must be a positive number.' });
   }
   if (!['all', 'available'].includes(availability)) {
     return res.status(400).json({ error: 'Availability filter must be all or available.' });
   }
 
-  const radiusKm = Math.min(requestedRadius, 50);
+  // “All distances” in the UI is intentionally broad but bounded at 1200 km.
+  const radiusKm = requestedRadius === null ? 1200 : Math.min(requestedRadius, 1200);
   const searchTerm = `%${String(query).trim()}%`;
 
   try {
@@ -562,6 +721,10 @@ app.get('/api/search/products', async (req, res) => {
             s.address, s.latitude, s.longitude, s.google_map_link,
             s.phone, s.whatsapp_number, s.opening_hours, s.is_open, s.open_status_updated_at,
             s.is_verified, s.verified_at,
+            COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS product_average_rating,
+            (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS product_review_count,
+            COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM shop_reviews WHERE shop_id = s.id), 0) AS shop_average_rating,
+            (SELECT COUNT(*)::int FROM shop_reviews WHERE shop_id = s.id) AS shop_review_count,
             6371 * acos(LEAST(1, GREATEST(-1,
               cos(radians($1)) * cos(radians(s.latitude)) *
               cos(radians(s.longitude) - radians($2)) +
@@ -585,7 +748,7 @@ app.get('/api/search/products', async (req, res) => {
           END,
           distance_km ASC,
           price ASC
-        LIMIT 100;
+        LIMIT 500;
       `,
       [latitude, longitude, searchTerm, radiusKm, availability]
     );
@@ -603,13 +766,14 @@ app.get('/api/search/products', async (req, res) => {
 });
 
 app.get('/api/search/suggestions', async (req, res) => {
-  const { lat, lng, query = '', radius = '10' } = req.query;
+  const { lat, lng, query = '' } = req.query;
   const latitude = Number(lat);
   const longitude = Number(lng);
-  const requestedRadius = Number(radius);
+  const radiusValue = String(req.query.radius || '').trim();
+  const requestedRadius = radiusValue ? Number(radiusValue) : null;
   const term = String(query).trim();
 
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(requestedRadius)) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || (requestedRadius !== null && !Number.isFinite(requestedRadius))) {
     return res.status(400).json({ error: 'Valid latitude, longitude, and radius are required.' });
   }
   if (term.length < 2) return res.json({ suggestions: [] });
@@ -631,12 +795,12 @@ app.get('/api/search/suggestions', async (req, res) => {
         )
         SELECT name, brand, MIN(distance_km) AS distance_km
         FROM nearby_matches
-        WHERE distance_km <= $4
+        WHERE ($4::numeric IS NULL OR distance_km <= $4)
         GROUP BY name, brand
         ORDER BY distance_km ASC, name ASC
         LIMIT 8;
       `,
-      [latitude, longitude, `%${term}%`, Math.min(Math.max(requestedRadius, 1), 50)]
+      [latitude, longitude, `%${term}%`, requestedRadius === null ? 1200 : Math.min(Math.max(requestedRadius, 1), 1200)]
     );
     return res.json({ suggestions: result.rows });
   } catch (err) {

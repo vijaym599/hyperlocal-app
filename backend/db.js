@@ -29,6 +29,7 @@ const initDb = async () => {
         owner_name VARCHAR(255),
         email VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
+        user_type VARCHAR(20) NOT NULL DEFAULT 'customer',
         is_admin BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -48,11 +49,15 @@ const initDb = async () => {
         phone VARCHAR(30),
         whatsapp_number VARCHAR(30),
         opening_hours TEXT,
+        opening_time TIME,
+        closing_time TIME,
         is_open BOOLEAN NOT NULL DEFAULT TRUE,
         open_status_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_verified BOOLEAN NOT NULL DEFAULT FALSE,
         verified_at TIMESTAMP,
         subscription_plan VARCHAR(50) DEFAULT 'free',
+        subscription_status VARCHAR(20) NOT NULL DEFAULT 'active',
+        subscription_cancelled_at TIMESTAMP,
         payment_id VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -113,6 +118,18 @@ const initDb = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (product_id, user_id)
       );
+
+      CREATE TABLE IF NOT EXISTS user_activities (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action_type VARCHAR(30) NOT NULL CHECK (action_type IN ('review', 'call', 'directions')),
+        shop_id INTEGER REFERENCES shops(id) ON DELETE SET NULL,
+        product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS user_activities_user_created_idx
+        ON user_activities (user_id, created_at DESC);
     `);
 
     // Existing installations may have been created before these fields existed.
@@ -120,7 +137,13 @@ const initDb = async () => {
     // deletes or rewrites existing shop or product records.
     await pool.query(`
       ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+        ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS user_type VARCHAR(20) NOT NULL DEFAULT 'customer';
+
+      UPDATE users u
+      SET user_type = 'shop_owner'
+      WHERE user_type = 'customer'
+        AND EXISTS (SELECT 1 FROM shops s WHERE s.user_id = u.id);
 
       ALTER TABLE shops
         ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'Others',
@@ -128,11 +151,17 @@ const initDb = async () => {
         ADD COLUMN IF NOT EXISTS phone VARCHAR(30),
         ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(30),
         ADD COLUMN IF NOT EXISTS opening_hours TEXT,
+        ADD COLUMN IF NOT EXISTS opening_time TIME,
+        ADD COLUMN IF NOT EXISTS closing_time TIME,
         ADD COLUMN IF NOT EXISTS is_open BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS open_status_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP,
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+      ALTER TABLE shops
+        ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) NOT NULL DEFAULT 'active',
+        ADD COLUMN IF NOT EXISTS subscription_cancelled_at TIMESTAMP;
 
       ALTER TABLE products
         ADD COLUMN IF NOT EXISTS description TEXT,

@@ -88,6 +88,13 @@ const availabilityPresentation = (status) => ({
   out_of_stock: { label: 'Out of stock', className: 'bg-rose-50 text-rose-700 border-rose-200' }
 }[status] || { label: 'Availability not updated', className: 'bg-slate-50 text-slate-600 border-slate-200' });
 
+const RatingBadge = ({ rating, count, label, onClick }) => {
+  const reviewCount = Number(count || 0);
+  const content = <><Star className={`h-3.5 w-3.5 ${reviewCount ? 'fill-amber-400 text-amber-400' : ''}`} /> {reviewCount ? <>{Number(rating).toFixed(1)}<span className="font-medium text-amber-700/70">/5 ({reviewCount})</span></> : 'No ratings yet'}</>;
+  const className = reviewCount ? 'inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800' : 'inline-flex items-center gap-1 text-[11px] font-medium text-slate-400';
+  return onClick ? <button type="button" onClick={onClick} className={`${className} transition hover:scale-105 hover:bg-amber-100`} title={`See ${label.toLowerCase()} and reviews`}>{content}</button> : <span className={className} title={`${label}: ${reviewCount} review${reviewCount === 1 ? '' : 's'}`}>{content}</span>;
+};
+
 const formatUpdatedAt = (value) => {
   if (!value) return null;
   const updatedAt = new Date(value).getTime();
@@ -113,10 +120,10 @@ const Pagination = ({ page, pageCount, setPage, itemName }) => {
   );
 };
 
-const NearbySearch = ({ session }) => {
+const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
-  const [radiusKm, setRadiusKm] = useState('10');
+  const [radiusKm, setRadiusKm] = useState('');
   const [availableOnly, setAvailableOnly] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -124,6 +131,9 @@ const NearbySearch = ({ session }) => {
   const [requestMessage, setRequestMessage] = useState('');
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [reviewItem, setReviewItem] = useState(null);
+  const [existingReviews, setExistingReviews] = useState([]);
+  const [reviewSummary, setReviewSummary] = useState(null);
   const [reviewTarget, setReviewTarget] = useState('product');
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
@@ -146,23 +156,56 @@ const NearbySearch = ({ session }) => {
 
   const submitReview = async (event) => {
     event.preventDefault();
-    if (!session?.token) { setReviewMessage('Please sign in from My Shop to add a review.'); return; }
-    if (!selectedProduct) return;
+    if (!session?.token) { setReviewMessage('Please sign in with a customer account to add a review.'); onRequireLogin?.(); return; }
+    const item = reviewItem || selectedProduct;
+    if (!item) return;
     setSavingReview(true); setReviewMessage('');
     try {
-      const id = reviewTarget === 'product' ? selectedProduct.id : selectedProduct.shop_id;
+      const id = reviewTarget === 'product' ? item.id : (item.shop_id || item.id);
       const response = await fetch(`${API_BASE_URL}/api/reviews/${reviewTarget}/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` }, body: JSON.stringify({ rating: reviewRating, comment: reviewComment }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save review.');
       setReviewMessage('Thanks! Your review has been saved.'); setReviewComment('');
+      const latestReviewData = await loadReviews(reviewTarget, item);
+      const summary = latestReviewData?.summary;
+      if (summary) {
+        const average = Number(summary.average_rating || 0);
+        const count = Number(summary.review_count || 0);
+        if (reviewTarget === 'product') {
+          setProducts((current) => current.map((product) => product.id === item.id ? { ...product, product_average_rating: average, product_review_count: count } : product));
+        } else {
+          const shopId = item.shop_id || item.id;
+          setProducts((current) => current.map((product) => product.shop_id === shopId ? { ...product, shop_average_rating: average, shop_review_count: count } : product));
+          setShops((current) => current.map((shop) => shop.id === shopId ? { ...shop, average_rating: average, review_count: count } : shop));
+        }
+      }
+      if (userLocation) fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all');
     } catch (error) { setReviewMessage(error.message); } finally { setSavingReview(false); }
   };
 
+  const loadReviews = async (target, item) => {
+    if (!item) return;
+    try {
+      const id = target === 'product' ? item.id : (item.shop_id || item.id);
+      const response = await fetch(`${API_BASE_URL}/api/reviews/${target}/${id}`, { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error();
+      setReviewSummary(data.summary); setExistingReviews(data.reviews || []);
+      return data;
+    } catch { setReviewSummary(null); setExistingReviews([]); return null; }
+  };
+
+  const openReviews = (item, target = 'product') => {
+    setReviewItem(item); setReviewTarget(target); setReviewMessage(''); setReviewComment('');
+    loadReviews(target, item);
+  };
+
   // Fetch a product-first, radius-limited result set from the server.
-  const fetchNearbyData = useCallback(async (lat, lng, query = '', radius = '10', availability = 'all') => {
+  const fetchNearbyData = useCallback(async (lat, lng, query = '', radius = '', availability = 'all') => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ lat: String(lat), lng: String(lng), radius, query, availability });
+      const params = new URLSearchParams({ lat: String(lat), lng: String(lng), query, availability });
+      if (radius) params.set('radius', radius);
       const url = `${API_BASE_URL}/api/search/products?${params}`;
 
       const res = await fetch(url);
@@ -186,6 +229,8 @@ const NearbySearch = ({ session }) => {
           opening_hours: product.opening_hours || null,
           is_open: Boolean(product.is_open),
           is_verified: Boolean(product.is_verified),
+          average_rating: Number(product.shop_average_rating || 0),
+          review_count: Number(product.shop_review_count || 0),
           lat: Number.isFinite(Number(product.latitude)) ? Number(product.latitude) : null,
           lng: Number.isFinite(Number(product.longitude)) ? Number(product.longitude) : null,
           backendDistance: Number.isFinite(distance) ? distance : null,
@@ -279,7 +324,8 @@ const NearbySearch = ({ session }) => {
 
     const controller = new AbortController();
     const suggestionTimer = window.setTimeout(() => {
-      const params = new URLSearchParams({ lat: String(userLocation.lat), lng: String(userLocation.lng), radius: radiusKm, query });
+      const params = new URLSearchParams({ lat: String(userLocation.lat), lng: String(userLocation.lng), query });
+      if (radiusKm) params.set('radius', radiusKm);
       fetch(`${API_BASE_URL}/api/search/suggestions?${params}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() : Promise.reject(new Error('Suggestions unavailable')))
         .then((data) => setSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []))
@@ -295,15 +341,22 @@ const NearbySearch = ({ session }) => {
   }, [radiusKm, searchQuery, userLocation]);
 
   // 3. Open Google Maps
-  const handleGetDirections = (lat, lng, name, address) => {
+  const saveActivity = (action, shopId, productId) => {
+    if (!session?.token || !shopId) return;
+    fetch(`${API_BASE_URL}/api/activity/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` }, body: JSON.stringify({ shop_id: shopId, product_id: productId }) }).catch(() => {});
+  };
+
+  const handleGetDirections = (lat, lng, name, address, shopId, productId) => {
+    saveActivity('directions', shopId, productId);
     const mapsUrl = lat && lng && !isNaN(lat) && !isNaN(lng)
       ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name || ''} ${address || ''}`)}`;
     window.open(mapsUrl, '_blank');
   };
 
-  const handleCall = (phone) => {
+  const handleCall = (phone, shopId, productId) => {
     if (!phone) return;
+    saveActivity('call', shopId, productId);
     window.open(`tel:${String(phone).replace(/[^+\d]/g, '')}`, '_self');
   };
 
@@ -333,7 +386,7 @@ const NearbySearch = ({ session }) => {
           customer_phone: requestPhone,
           latitude: userLocation?.lat,
           longitude: userLocation?.lng,
-          radius_km: Number(radiusKm)
+          radius_km: radiusKm ? Number(radiusKm) : null
         })
       });
       const data = await response.json();
@@ -508,6 +561,7 @@ const NearbySearch = ({ session }) => {
         <label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">
           <span className="hidden xl:inline">Radius</span>
           <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="bg-transparent text-xs font-bold text-emerald-700 outline-none">
+            <option value="">All distances</option>
             <option value="2">2 km</option>
             <option value="5">5 km</option>
             <option value="10">10 km</option>
@@ -607,6 +661,11 @@ const NearbySearch = ({ session }) => {
                           {availabilityUpdatedText && <span className="text-[10px] text-slate-400">{availabilityUpdatedText}</span>}
                         </div>
 
+                        <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+                          <RatingBadge rating={p.product_average_rating} count={p.product_review_count} label="Product rating" onClick={() => openReviews(p)} />
+                          <span className="text-[10px] font-medium text-slate-400">Product reviews</span>
+                        </div>
+
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {p.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700"><BadgeCheck className="h-3 w-3" /> Verified shop</span>}
                           <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${p.shop_is_open ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{p.shop_is_open ? 'Open now' : 'Currently closed'}</span>
@@ -629,9 +688,9 @@ const NearbySearch = ({ session }) => {
                         <button onClick={() => shareProduct(p)} aria-label="Share product" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-500"><Share2 className="h-4 w-4" /></button>
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2">
-                        {p.shop_phone && <button onClick={() => handleCall(p.shop_phone)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
+                        {p.shop_phone && <button onClick={() => handleCall(p.shop_phone, p.shop_id, p.id)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
                         {p.shop_whatsapp_number && <button onClick={() => handleWhatsApp(p.shop_whatsapp_number, p.name, p.shop_name)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
-                        <button onClick={() => handleGetDirections(p.shop_lat, p.shop_lng, p.shop_name, p.shop_address)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
+                        <button onClick={() => handleGetDirections(p.shop_lat, p.shop_lng, p.shop_name, p.shop_address, p.shop_id, p.id)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
                       </div>
                     </div>
                   );
@@ -695,6 +754,7 @@ const NearbySearch = ({ session }) => {
                         <span className="inline-block mt-1 text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
                           {shop.categoryLabel}
                         </span>
+                        <div className="mt-2"><RatingBadge rating={shop.average_rating} count={shop.review_count} label="Shop rating" onClick={() => openReviews({ ...shop, shop_id: shop.id }, 'shop')} /></div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {shop.is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700"><BadgeCheck className="h-3 w-3" /> Verified</span>}
                           <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${shop.is_open ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{shop.is_open ? 'Open now' : 'Currently closed'}</span>
@@ -709,9 +769,10 @@ const NearbySearch = ({ session }) => {
                       </div>
 
                       <div className="mt-4 grid grid-cols-2 gap-2">
-                        {shop.phone && <button onClick={() => handleCall(shop.phone)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
+                        <button onClick={() => onOpenShop?.(shop)} className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"><Store className="h-3.5 w-3.5" /> View full shop catalog</button>
+                        {shop.phone && <button onClick={() => handleCall(shop.phone, shop.id)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
                         {shop.whatsapp_number && <button onClick={() => handleWhatsApp(shop.whatsapp_number, null, shop.name)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
-                        <button onClick={() => handleGetDirections(shop.lat, shop.lng, shop.name, shop.address)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
+                        <button onClick={() => handleGetDirections(shop.lat, shop.lng, shop.name, shop.address, shop.id)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
                       </div>
                     </div>
                   );
@@ -731,21 +792,39 @@ const NearbySearch = ({ session }) => {
               <button onClick={() => setSelectedProduct(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
             <img src={selectedProduct.image_url || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=600'} alt={selectedProduct.name} className="mt-4 h-52 w-full rounded-xl object-cover" />
-            <div className="mt-4 flex flex-wrap gap-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${availabilityPresentation(selectedProduct.availability_status).className}`}>{availabilityPresentation(selectedProduct.availability_status).label}</span>{selectedProduct.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified shop</span>}</div>
+            <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${availabilityPresentation(selectedProduct.availability_status).className}`}>{availabilityPresentation(selectedProduct.availability_status).label}</span><RatingBadge rating={selectedProduct.product_average_rating} count={selectedProduct.product_review_count} label="Product rating" />{selectedProduct.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified shop</span>}</div>
             {selectedProduct.brand && <p className="mt-4 text-sm font-semibold text-slate-700">{selectedProduct.brand}</p>}
             {selectedProduct.description && <p className="mt-2 text-sm leading-6 text-slate-600">{selectedProduct.description}</p>}
-            <form onSubmit={submitReview} className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold text-slate-800">Rate &amp; review</p><select value={reviewTarget} onChange={(event) => { setReviewTarget(event.target.value); setReviewMessage(''); }} className="rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"><option value="product">This product</option><option value="shop">This shop</option></select></div>
-              <div className="mt-2 flex gap-1">{[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" onClick={() => setReviewRating(value)} aria-label={`${value} star rating`} className={value <= reviewRating ? 'text-amber-400' : 'text-slate-300'}><Star className="h-5 w-5 fill-current" /></button>)}</div>
-              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Share your experience (optional)" className="mt-2 min-h-16 w-full rounded-lg border border-amber-200 bg-white p-2 text-xs outline-none focus:border-amber-400" />
+            <form onSubmit={submitReview} className="hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-bold text-slate-800">How was your experience?</p><p className="text-xs text-slate-500">Your rating helps nearby customers choose.</p></div><select value={reviewTarget} onChange={(event) => { setReviewTarget(event.target.value); setReviewMessage(''); }} className="rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700"><option value="product">Rate product</option><option value="shop">Rate shop</option></select></div>
+              <div className="mt-3 flex items-center gap-1">{[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" onClick={() => setReviewRating(value)} aria-label={`${value} star rating`} className={`rounded-lg p-1 transition hover:scale-110 ${value <= reviewRating ? 'text-amber-400' : 'text-slate-300'}`}><Star className="h-7 w-7 fill-current" /></button>)}<span className="ml-2 text-sm font-bold text-amber-800">{reviewRating}/5</span></div>
+              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Tell others what you liked (optional)" className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm outline-none focus:border-amber-400" />
               <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-slate-500">{reviewMessage}</span><button disabled={savingReview} className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-amber-950 disabled:opacity-60">{savingReview ? 'Saving…' : 'Submit review'}</button></div>
             </form>
             <div className="mt-5 rounded-xl bg-slate-50 p-3"><p className="font-bold text-slate-800">{selectedProduct.shop_name}</p><p className="mt-1 text-sm text-slate-500">{selectedProduct.shop_address}</p></div>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              {selectedProduct.shop_phone && <button onClick={() => handleCall(selectedProduct.shop_phone)} className="rounded-lg border border-slate-300 py-2.5 text-sm font-semibold text-slate-700"><Phone className="mr-1 inline h-4 w-4" />Call</button>}
+              {selectedProduct.shop_phone && <button onClick={() => handleCall(selectedProduct.shop_phone, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-slate-300 py-2.5 text-sm font-semibold text-slate-700"><Phone className="mr-1 inline h-4 w-4" />Call</button>}
               {selectedProduct.shop_whatsapp_number && <button onClick={() => handleWhatsApp(selectedProduct.shop_whatsapp_number, selectedProduct.name, selectedProduct.shop_name)} className="rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-700"><MessageCircle className="mr-1 inline h-4 w-4" />WhatsApp</button>}
-              <button onClick={() => handleGetDirections(selectedProduct.shop_lat, selectedProduct.shop_lng, selectedProduct.shop_name, selectedProduct.shop_address)} className="col-span-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white"><Navigation className="mr-1 inline h-4 w-4" />Get Directions</button>
+              <button onClick={() => handleGetDirections(selectedProduct.shop_lat, selectedProduct.shop_lng, selectedProduct.shop_name, selectedProduct.shop_address, selectedProduct.shop_id, selectedProduct.id)} className="col-span-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white"><Navigation className="mr-1 inline h-4 w-4" />Get Directions</button>
             </div>
+          </div>
+        </div>
+      )}
+      {reviewItem && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div><p className="text-xs font-bold uppercase tracking-wide text-amber-600">Community ratings</p><h2 className="mt-1 text-xl font-bold text-slate-800">{reviewTarget === 'shop' ? reviewItem.name : reviewItem.name}</h2><p className="mt-1 text-sm text-slate-500">See what local customers think and share your experience.</p></div>
+              <button onClick={() => setReviewItem(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="mt-4 flex items-center gap-3 rounded-xl bg-amber-50 p-3"><Star className="h-7 w-7 fill-amber-400 text-amber-400" /><div><p className="text-lg font-extrabold text-slate-800">{reviewSummary?.average_rating || '0.0'} / 5</p><p className="text-xs text-slate-500">{reviewSummary?.review_count || 0} customer review{Number(reviewSummary?.review_count || 0) === 1 ? '' : 's'}</p></div></div>
+            <form onSubmit={submitReview} className="mt-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-4">
+              <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-slate-800">Add your rating</p><select value={reviewTarget} onChange={(event) => { const target = event.target.value; setReviewTarget(target); setReviewMessage(''); loadReviews(target, reviewItem); }} className="rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700"><option value="product" disabled={!reviewItem.shop_id}>Product</option><option value="shop">Shop</option></select></div>
+              <div className="mt-3 flex items-center gap-1">{[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" onClick={() => setReviewRating(value)} aria-label={`${value} star rating`} className={`rounded-lg p-1 transition hover:scale-110 ${value <= reviewRating ? 'text-amber-400' : 'text-slate-300'}`}><Star className="h-7 w-7 fill-current" /></button>)}<span className="ml-2 text-sm font-bold text-amber-800">{reviewRating}/5</span></div>
+              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Tell others what you liked (optional)" className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm outline-none focus:border-amber-400" />
+              <div className="mt-3 flex items-center justify-between gap-2"><span className="text-xs font-medium text-emerald-700">{reviewMessage}</span><button disabled={savingReview} className="rounded-xl bg-amber-400 px-4 py-2 text-xs font-bold text-amber-950 disabled:opacity-60">{savingReview ? 'Saving...' : 'Publish review'}</button></div>
+            </form>
+            <div className="mt-5"><h3 className="text-sm font-bold text-slate-800">Recent reviews</h3>{existingReviews.length ? <div className="mt-3 space-y-3">{existingReviews.map((review) => <article key={review.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-center justify-between"><p className="text-sm font-semibold text-slate-700">{review.owner_name || 'Nearbuy customer'}</p><span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />{review.rating}/5</span></div>{review.comment && <p className="mt-2 text-sm leading-5 text-slate-600">{review.comment}</p>}<p className="mt-2 text-[11px] text-slate-400">{new Date(review.created_at).toLocaleDateString()}</p></article>)}</div> : <p className="mt-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No reviews yet. Be the first to share your experience.</p>}</div>
           </div>
         </div>
       )}

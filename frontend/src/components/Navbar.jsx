@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Store, Compass, PlusCircle, Menu, X, LogOut, User, BarChart3 } from 'lucide-react';
+import { Store, Compass, PlusCircle, Menu, X, LogOut, User, BarChart3, Clock3, LogIn } from 'lucide-react';
 
-const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
+const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAuth }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const homeTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'explore';
 
   return (
     <nav className="sticky top-0 z-50 border-b border-white/70 bg-white/80 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl">
@@ -11,7 +12,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
           
           {/* App Logo & Name */}
           <div 
-            onClick={() => setActiveTab('explore')}
+            onClick={() => setActiveTab(homeTab)}
             className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition"
           >
             <div className="rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 p-2 text-white shadow-lg shadow-emerald-600/20">
@@ -24,7 +25,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
 
           {/* Desktop Navigation Links */}
           <div className="hidden md:flex items-center gap-3">
-            <button
+            {(role === 'guest' || role === 'customer') && <button
               onClick={() => setActiveTab('explore')}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${
                 activeTab === 'explore'
@@ -34,9 +35,9 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
             >
               <Compass className="w-4 h-4" />
               Explore
-            </button>
+            </button>}
 
-            <button
+            {(role === 'guest' || role === 'shop_owner') && <button
                 onClick={() => setActiveTab('my-shop')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${
                     activeTab === 'my-shop'
@@ -46,7 +47,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
                 >
               <PlusCircle className="w-4 h-4" />
               My Shop
-            </button>
+            </button>}
 
             {session?.user?.is_admin && (
               <button
@@ -60,6 +61,9 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
                 <BarChart3 className="w-4 h-4" />
                 Demand
               </button>
+            )}
+            {role === 'customer' && (
+              <button onClick={() => setActiveTab('activity')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'activity' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'text-slate-600 hover:bg-slate-100'}`}><Clock3 className="w-4 h-4" />Activity</button>
             )}
 
             <div className="h-6 w-px bg-slate-200 mx-1" />
@@ -80,7 +84,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
                   Sign out
                 </button>
               </div>
-            ) : null}
+            ) : role === 'guest' ? <button onClick={onCustomerAuth} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><LogIn className="w-3.5 h-3.5" />Sign in</button> : null}
           </div>
 
           {/* Mobile Menu Toggle Button */}
@@ -98,7 +102,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
       {/* Mobile Menu Dropdown */}
       {isOpen && (
         <div className="md:hidden border-t border-slate-100 bg-slate-50 px-4 pt-3 pb-4 space-y-2">
-          <button
+          {(role === 'guest' || role === 'customer') && <button
             onClick={() => {
               setActiveTab('explore');
               setIsOpen(false);
@@ -111,9 +115,9 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
           >
             <Compass className="w-4 h-4" />
             Explore
-          </button>
+          </button>}
 
-          <button
+          {(role === 'guest' || role === 'shop_owner') && <button
             onClick={() => {
               setActiveTab('my-shop');
               setIsOpen(false);
@@ -126,7 +130,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
           >
             <PlusCircle className="w-4 h-4" />
             My Shop
-          </button>
+          </button>}
 
           {session?.user?.is_admin && (
             <button
@@ -144,6 +148,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
               Product Demand
             </button>
           )}
+          {role === 'customer' && <button onClick={() => { setActiveTab('activity'); setIsOpen(false); }} className="flex w-full items-center gap-2.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200/60"><Clock3 className="w-4 h-4" />My activity</button>}
 
           <div className="pt-2 border-t border-slate-200">
             {session?.token ? (
@@ -158,7 +163,7 @@ const Navbar = ({ activeTab, setActiveTab, session, onLogout }) => {
                   Sign out
                 </button>
               </div>
-            ) : null}
+            ) : role === 'guest' ? <button onClick={() => { onCustomerAuth(); setIsOpen(false); }} className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Sign in</button> : null}
           </div>
         </div>
       )}

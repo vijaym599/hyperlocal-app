@@ -65,6 +65,7 @@ export default function Footer({ setActiveTab }) {
             <h3 className="text-sm font-bold text-white">For businesses</h3>
             <div className="mt-4 space-y-3">
               <FooterLink onClick={goTo('my-shop')}>List your shop</FooterLink>
+              <FooterLink onClick={goTo('pricing')}>Pricing &amp; plans</FooterLink>
               <FooterLink onClick={goTo('my-shop')}>Manage product catalog</FooterLink>
               <FooterLink onClick={goTo('my-shop')}>Update availability</FooterLink>
               <FooterLink onClick={goTo('about')}>Grow local visibility</FooterLink>
