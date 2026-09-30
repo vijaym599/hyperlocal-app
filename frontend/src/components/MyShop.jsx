@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, Loader2, Upload, RefreshCw, LogOut, Pencil, X, Tag } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, Loader2, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 const SUBSCRIPTION_PLANS = [
   { id: 'free', name: 'Free', price: 0, limit: 10, desc: 'Starter plan for small local vendors' },
@@ -20,10 +21,32 @@ const SHOP_CATEGORIES = [
   'Beauty & Cosmetics',
   'Vegetables & Fruits',
   'General Store',
+  'Food & Dining',
+  'Home & Furniture',
+  'Stationery & Books',
+  'Jewellery & Accessories',
+  'Automotive & Vehicle Care',
+  'Pet Supplies & Services',
+  'Education & Tuition',
+  'Fitness & Sports',
+  'Local & Professional Services',
   'Others'
 ];
 
 const DEFAULT_IMAGE = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
+const AVAILABILITY_OPTIONS = [
+  { value: 'available', label: 'Available' },
+  { value: 'low_stock', label: 'Low stock' },
+  { value: 'out_of_stock', label: 'Out of stock' }
+];
+
+const availabilityBadgeClass = (status) => ({
+  available: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  low_stock: 'bg-amber-50 text-amber-700 border-amber-200',
+  out_of_stock: 'bg-rose-50 text-rose-700 border-rose-200'
+}[status] || 'bg-slate-50 text-slate-600 border-slate-200');
+
+const availabilityLabel = (status) => AVAILABILITY_OPTIONS.find((item) => item.value === status)?.label || 'Available';
 
 const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : 'choice');
@@ -44,33 +67,33 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     password: '',
     shop_name: '',
     category: '', // Added Category
+    address: '',
+    phone: '',
+    whatsapp_number: '',
+    opening_hours: '',
     google_map_link: '',
     latitude: '',
     longitude: '',
     selected_plan: 'free'
   });
 
-  const [newProduct, setNewProduct] = useState({ name: '', price: '', image_url: '' });
+  const [newProduct, setNewProduct] = useState({ name: '', brand: '', description: '', price: '', image_url: '', availability_status: 'available' });
   const [editingProduct, setEditingProduct] = useState(null);
-
-  useEffect(() => {
-    if (session?.shop) {
-      setShopData(session.shop);
-      setViewMode('dashboard');
-    } else if (!session?.token) {
-      setShopData(null);
-      setViewMode('choice');
-    }
-  }, [session]);
+  const [editingShop, setEditingShop] = useState(false);
+  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', phone: '', whatsapp_number: '', opening_hours: '', latitude: '', longitude: '', google_map_link: '' });
 
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
   const maxProductsAllowed = activePlanDetails.limit;
+  const authenticatedJsonHeaders = () => ({
+    'Content-Type': 'application/json',
+    ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {})
+  });
 
   const fetchProductsFromBackend = async (shopId) => {
     if (!shopId) return;
     setFetchingProducts(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/shops/${shopId}/products`);
+      const res = await fetch(`${API_BASE_URL}/api/shops/${shopId}/products`);
       if (res.ok) {
         const data = await res.json();
         setProducts(data.products || []);
@@ -134,7 +157,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     setErrorMsg('');
 
     try {
-      const res = await fetch('http://localhost:5000/api/auth/login', {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginData)
@@ -173,7 +196,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         payment_id: paymentId 
       };
 
-      const res = await fetch('http://localhost:5000/api/auth/register-shop', {
+      const res = await fetch(`${API_BASE_URL}/api/auth/register-shop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -219,9 +242,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/shops/${shopData.id}/products`, {
+      const res = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/products`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authenticatedJsonHeaders(),
         body: JSON.stringify(newProduct)
       });
 
@@ -236,7 +259,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       if (!res.ok) throw new Error(data.error || 'Failed to add product');
 
       await fetchProductsFromBackend(shopData.id);
-      setNewProduct({ name: '', price: '', image_url: '' });
+      setNewProduct({ name: '', brand: '', description: '', price: '', image_url: '', availability_status: 'available' });
       alert("Product added successfully!");
 
     } catch (err) {
@@ -252,13 +275,16 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/products/${editingProduct.id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/products/${editingProduct.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authenticatedJsonHeaders(),
         body: JSON.stringify({
           name: editingProduct.name,
+          brand: editingProduct.brand,
+          description: editingProduct.description,
           price: editingProduct.price,
           image_url: editingProduct.image_url,
+          availability_status: editingProduct.availability_status,
           shop_id: shopData.id
         })
       });
@@ -279,6 +305,85 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
     } catch (err) {
       alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteProduct = async (product) => {
+    if (!shopData?.id || !window.confirm(`Delete “${product.name}”? This cannot be undone.`)) return;
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/products/${product.id}`, {
+        method: 'DELETE',
+        headers: authenticatedJsonHeaders()
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to delete product.');
+      await fetchProductsFromBackend(shopData.id);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openShopEditor = () => {
+    setShopForm({
+      name: shopData?.name || shopData?.shop_name || '',
+      category: shopData?.category || '',
+      address: shopData?.address || '',
+      phone: shopData?.phone || '',
+      whatsapp_number: shopData?.whatsapp_number || '',
+      opening_hours: shopData?.opening_hours || '',
+      latitude: shopData?.latitude ?? '',
+      longitude: shopData?.longitude ?? '',
+      google_map_link: shopData?.google_map_link || ''
+    });
+    setEditingShop(true);
+  };
+
+  const handleUpdateShop = async (e) => {
+    e.preventDefault();
+    if (!shopData?.id) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}`, {
+        method: 'PUT',
+        headers: authenticatedJsonHeaders(),
+        body: JSON.stringify(shopForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update shop details');
+      setShopData(data.shop);
+      const updatedSession = { ...session, shop: data.shop };
+      localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession));
+      onLoginSuccess?.(updatedSession);
+      setEditingShop(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenStatus = async () => {
+    if (!shopData?.id) return;
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/open-status`, {
+        method: 'PATCH',
+        headers: authenticatedJsonHeaders(),
+        body: JSON.stringify({ is_open: !(shopData.is_open !== false) })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update shop status.');
+      setShopData(data.shop);
+      const updatedSession = { ...session, shop: data.shop };
+      localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession));
+      onLoginSuccess?.(updatedSession);
+    } catch (error) {
+      alert(error.message);
     } finally {
       setLoading(false);
     }
@@ -341,7 +446,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
             <input type="text" required placeholder="Owner Name *" value={regForm.owner_name} onChange={(e) => setRegForm({ ...regForm, owner_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <input type="email" required placeholder="Email *" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="password" required minLength={6} placeholder="Password *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="password" required minLength={8} placeholder="Password (minimum 8 characters) *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             
             <input type="text" required placeholder="Shop Name *" value={regForm.shop_name} onChange={(e) => setRegForm({ ...regForm, shop_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             
@@ -357,6 +462,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 <option key={cat} value={cat}>{cat}</option>
               ))}
             </select>
+
+            <textarea required rows="2" placeholder="Shop address *" value={regForm.address} onChange={(e) => setRegForm({ ...regForm, address: e.target.value })} className="w-full resize-none px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="tel" required placeholder="Call number with country code, e.g. +919876543210 *" value={regForm.phone} onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="tel" placeholder="WhatsApp number (optional)" value={regForm.whatsapp_number} onChange={(e) => setRegForm({ ...regForm, whatsapp_number: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="text" placeholder="Opening hours, e.g. 9 AM – 9 PM" value={regForm.opening_hours} onChange={(e) => setRegForm({ ...regForm, opening_hours: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <div className="flex justify-between items-center">
@@ -444,6 +554,13 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={handleOpenStatus} disabled={loading} className={`p-2 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer ${shopData?.is_open !== false ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-amber-500 hover:bg-amber-400 text-white'}`} title="Update open status">
+            <span className="hidden sm:inline">{shopData?.is_open !== false ? 'Open now' : 'Closed'}</span>
+            <span className="sm:hidden">{shopData?.is_open !== false ? 'Open' : 'Closed'}</span>
+          </button>
+          <button onClick={openShopEditor} className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
+            <Pencil className="w-4 h-4" /><span className="hidden sm:inline">Edit Shop</span>
+          </button>
           <button 
             onClick={() => fetchProductsFromBackend(shopData?.id)} 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
@@ -465,6 +582,24 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       </div>
 
+      {editingShop && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 text-emerald-600" /> Edit shop details</h3><button onClick={() => setEditingShop(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button></div>
+            <form onSubmit={handleUpdateShop} className="space-y-3">
+              <input required value={shopForm.name} onChange={(e) => setShopForm({ ...shopForm, name: e.target.value })} placeholder="Shop name" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <select required value={shopForm.category} onChange={(e) => setShopForm({ ...shopForm, category: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><option value="" disabled>Select category</option>{SHOP_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>
+              <textarea rows="2" value={shopForm.address} onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })} placeholder="Shop address" className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><input type="tel" value={shopForm.phone} onChange={(e) => setShopForm({ ...shopForm, phone: e.target.value })} placeholder="Call number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="tel" value={shopForm.whatsapp_number} onChange={(e) => setShopForm({ ...shopForm, whatsapp_number: e.target.value })} placeholder="WhatsApp number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
+              <input type="text" value={shopForm.opening_hours} onChange={(e) => setShopForm({ ...shopForm, opening_hours: e.target.value })} placeholder="Opening hours" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <div className="grid grid-cols-2 gap-3"><input type="number" step="any" value={shopForm.latitude} onChange={(e) => setShopForm({ ...shopForm, latitude: e.target.value })} placeholder="Latitude" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="number" step="any" value={shopForm.longitude} onChange={(e) => setShopForm({ ...shopForm, longitude: e.target.value })} placeholder="Longitude" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
+              <input type="url" value={shopForm.google_map_link} onChange={(e) => setShopForm({ ...shopForm, google_map_link: e.target.value })} placeholder="Google Maps link (optional)" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <div className="flex gap-2 pt-2"><button type="button" onClick={() => setEditingShop(false)} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-600">Cancel</button><button disabled={loading} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white">{loading ? 'Saving...' : 'Save details'}</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Add Product Form */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
@@ -480,6 +615,23 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Price (₹) *</label>
               <input type="number" required placeholder="250" value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Brand / model</label>
+              <input type="text" placeholder="e.g. HP 65W" value={newProduct.brand} onChange={(e) => setNewProduct({ ...newProduct, brand: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Description</label>
+              <textarea rows="2" placeholder="Compatibility, size, or useful details" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full resize-none px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Availability *</label>
+              <select value={newProduct.availability_status} onChange={(e) => setNewProduct({ ...newProduct, availability_status: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                {AVAILABILITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
@@ -537,16 +689,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                     <div className="overflow-hidden">
                       <h4 className="font-bold text-sm text-slate-800 truncate">{p.name}</h4>
                       <p className="text-sm font-extrabold text-emerald-600 mt-0.5">₹{p.price}</p>
+                      <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${availabilityBadgeClass(p.availability_status)}`}>{availabilityLabel(p.availability_status)}</span>
                     </div>
                   </div>
 
-                  <button 
-                    onClick={() => setEditingProduct(p)}
-                    className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer shrink-0"
-                    title="Edit Product"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
+                  <div className="flex shrink-0">
+                    <button onClick={() => setEditingProduct(p)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer" title="Edit Product"><Pencil className="w-4 h-4" /></button>
+                    <button onClick={() => handleDeleteProduct(p)} disabled={loading} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-50" title="Delete Product"><Trash2 className="w-4 h-4" /></button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -591,6 +741,23 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                   onChange={(e) => setEditingProduct({ ...editingProduct, price: e.target.value })} 
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" 
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Brand / model</label>
+                <input type="text" value={editingProduct.brand || ''} onChange={(e) => setEditingProduct({ ...editingProduct, brand: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Description</label>
+                <textarea rows="2" value={editingProduct.description || ''} onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })} className="w-full resize-none px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Availability *</label>
+                <select value={editingProduct.availability_status || 'available'} onChange={(e) => setEditingProduct({ ...editingProduct, availability_status: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                  {AVAILABILITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
               </div>
 
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
