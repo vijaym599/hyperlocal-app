@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, Loader2, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 
 const SUBSCRIPTION_PLANS = [
-  { id: 'basic', name: 'Basic', price: 20, limit: 10, desc: 'Great for growing neighborhood stores' },
-  { id: 'pro', name: 'Pro', price: 199, limit: 100, desc: 'Ideal for established retail outlets' },
-  { id: 'advance', name: 'Advance', price: 499, limit: 300, desc: 'For large stores with wide catalog' },
-  { id: 'enterprise', name: 'Enterprise', price: 999, limit: 999999, desc: 'Unlimited products & priority support' }
+  { id: 'basic', name: 'Basic', price: 20, limit: 10, desc: 'Great for growing neighborhood stores · no shop insights' },
+  { id: 'pro', name: 'Pro', price: 199, limit: 100, desc: 'Monthly and total shop insights included' },
+  { id: 'advance', name: 'Advance', price: 499, limit: 300, desc: 'Monthly and total shop insights included' },
+  { id: 'enterprise', name: 'Enterprise', price: 999, limit: 999999, desc: 'Unlimited products, priority support & insights' }
 ];
 
 // SHOP CATEGORIES LIST
@@ -38,6 +38,7 @@ const AVAILABILITY_OPTIONS = [
   { value: 'low_stock', label: 'Low stock' },
   { value: 'out_of_stock', label: 'Out of stock' }
 ];
+const INSIGHT_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const availabilityBadgeClass = (status) => ({
   available: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -47,22 +48,85 @@ const availabilityBadgeClass = (status) => ({
 
 const availabilityLabel = (status) => AVAILABILITY_OPTIONS.find((item) => item.value === status)?.label || 'Available';
 
+const MAX_PRODUCT_IMAGE_DIMENSION = 1200;
+const MAX_PRODUCT_IMAGE_SIZE = 1.2 * 1024 * 1024;
+
+const optimiseProductImage = (file) => new Promise((resolve, reject) => {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    reject(new Error('Please upload a JPG, PNG, or WebP image.'));
+    return;
+  }
+  if (file.size > 12 * 1024 * 1024) {
+    reject(new Error('Please choose an image smaller than 12 MB.'));
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.onload = () => {
+    const scale = Math.min(1, MAX_PRODUCT_IMAGE_DIMENSION / Math.max(image.width, image.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(objectUrl);
+
+    const exportImage = (quality) => canvas.toBlob((blob) => {
+      if (!blob) return reject(new Error('Unable to optimize this image. Please try another file.'));
+      if (blob.size > MAX_PRODUCT_IMAGE_SIZE && quality > 0.6) return exportImage(0.65);
+      if (blob.size > MAX_PRODUCT_IMAGE_SIZE) return reject(new Error('This image is still too large after optimization. Please choose a smaller image.'));
+      const reader = new FileReader();
+      reader.onloadend = () => resolve({ dataUrl: reader.result, sizeKb: Math.ceil(blob.size / 1024) });
+      reader.readAsDataURL(blob);
+    }, 'image/webp', quality);
+    exportImage(0.82);
+  };
+  image.onerror = () => {
+    URL.revokeObjectURL(objectUrl);
+    reject(new Error('This image could not be read. Please try another file.'));
+  };
+  image.src = objectUrl;
+});
+
+const fetchShopOffers = async (shopId, token) => {
+  const response = await fetch(`${API_BASE_URL}/api/shops/${shopId}/offers`, { headers: { Authorization: `Bearer ${token}` } });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to load offers.');
+  return data.offers || [];
+};
+
 const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : 'choice');
   const [wizardStep, setWizardStep] = useState(1);
   const [selectedSubscriptionPlan, setSelectedSubscriptionPlan] = useState(null);
 
-  const [loginData, setLoginData] = useState({ email: '', password: '' });
+  const [loginData, setLoginData] = useState({ phone: '', password: '' });
   const [shopData, setShopData] = useState(session?.shop || null);
   const [products, setProducts] = useState([]);
+  const [productSearch, setProductSearch] = useState('');
+  const [updatingStockId, setUpdatingStockId] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [resetNotice, setResetNotice] = useState('');
+  const [insights, setInsights] = useState(null);
+  const [insightsPeriod, setInsightsPeriod] = useState('total');
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState('');
   const [fetchingProducts, setFetchingProducts] = useState(false);
   const [fetchingLoc, setFetchingLoc] = useState(false);
+  const [imageUploadMessage, setImageUploadMessage] = useState('');
+  const [shopOffers, setShopOffers] = useState([]);
+  const [offerForm, setOfferForm] = useState({ title: '', discount_text: '', description: '', valid_until: '' });
+  const [editingOffer, setEditingOffer] = useState(null);
+  const [offerMessage, setOfferMessage] = useState('');
+  const [offersLoading, setOffersLoading] = useState(false);
 
   // REGISTRATION FORM WITH CATEGORY
   const [regForm, setRegForm] = useState({
     owner_name: '',
+    account_phone: '',
     email: '',
     password: '',
     shop_name: '',
@@ -82,13 +146,17 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [newProduct, setNewProduct] = useState({ name: '', brand: '', description: '', price: '', image_url: '', availability_status: 'available' });
   const [editingProduct, setEditingProduct] = useState(null);
   const [editingShop, setEditingShop] = useState(false);
-  const [billingOpen, setBillingOpen] = useState(false);
+  const [dashboardSection, setDashboardSection] = useState('catalog');
   const [bulkMessage, setBulkMessage] = useState('');
   const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', phone: '', whatsapp_number: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
   const [autoOpen, setAutoOpen] = useState(shopData?.is_open !== false);
 
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
   const maxProductsAllowed = activePlanDetails.limit;
+  const hasShopInsights = INSIGHT_PLANS.has(shopData?.subscription_plan);
+  const currentDate = new Date();
+  const todayIso = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+  const filteredProducts = products.filter((product) => [product.name, product.brand, product.description].some((value) => String(value || '').toLowerCase().includes(productSearch.trim().toLowerCase())));
   const authenticatedJsonHeaders = () => ({
     'Content-Type': 'application/json',
     ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {})
@@ -103,9 +171,28 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   useEffect(() => {
     if (!shopData?.id) return undefined;
-    const sync = async () => { const state = isOpenBySchedule(shopData.opening_time, shopData.closing_time); const next = state === null ? shopData.is_open !== false : state; setAutoOpen(next); if (state !== null && next !== (shopData.is_open !== false)) { const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/open-status`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ is_open: next }) }); if (response.ok) { const data = await response.json(); setShopData(data.shop); } } };
+    const sync = async () => { const state = isOpenBySchedule(shopData.opening_time, shopData.closing_time); const next = state === null ? shopData.is_open !== false : state; setAutoOpen(next); if (state !== null && next !== (shopData.is_open !== false)) { const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/open-status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ is_open: next }) }); if (response.ok) { const data = await response.json(); setShopData(data.shop); } } };
     sync(); const timer = window.setInterval(sync, 60000); return () => window.clearInterval(timer);
-  }, [shopData?.id, shopData?.opening_time, shopData?.closing_time, shopData?.is_open]);
+  }, [shopData?.id, shopData?.opening_time, shopData?.closing_time, shopData?.is_open, session?.token]);
+
+  useEffect(() => {
+    if (!shopData?.id || !session?.token || !INSIGHT_PLANS.has(shopData.subscription_plan)) return;
+    const loadInsights = async () => {
+      setInsightsLoading(true);
+      setInsightsError('');
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/insights?period=${insightsPeriod}`, { headers: { Authorization: `Bearer ${session.token}` } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to load shop insights.');
+        setInsights(data.insights || null);
+      } catch (error) {
+        setInsightsError(error.message);
+      } finally {
+        setInsightsLoading(false);
+      }
+    };
+    void loadInsights();
+  }, [shopData?.id, shopData?.subscription_plan, session?.token, insightsPeriod]);
 
   const updateSubscription = async (action, plan = null) => {
     if (!shopData?.id) return;
@@ -145,18 +232,32 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     }
   }, [shopData?.id]);
 
-  const handleImageFileUpload = (e, isEdit = false) => {
+  const loadShopOffers = async () => {
+    if (!shopData?.id || !session?.token) return;
+    setShopOffers(await fetchShopOffers(shopData.id, session.token));
+  };
+
+  useEffect(() => {
+    if (!shopData?.id || !session?.token) return;
+    void Promise.resolve().then(async () => {
+      try { setShopOffers(await fetchShopOffers(shopData.id, session.token)); }
+      catch (error) { setOfferMessage(error.message); }
+    });
+  }, [shopData, session]);
+
+  const handleImageFileUpload = async (e, isEdit = false) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (isEdit) {
-          setEditingProduct(prev => ({ ...prev, image_url: reader.result }));
-        } else {
-          setNewProduct(prev => ({ ...prev, image_url: reader.result }));
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    setImageUploadMessage('Optimizing image for faster loading…');
+    try {
+      const { dataUrl, sizeKb } = await optimiseProductImage(file);
+      if (isEdit) setEditingProduct(prev => ({ ...prev, image_url: dataUrl }));
+      else setNewProduct(prev => ({ ...prev, image_url: dataUrl }));
+      setImageUploadMessage(`Optimized to ${sizeKb} KB and ready to upload.`);
+    } catch (error) {
+      setImageUploadMessage(error.message);
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -365,6 +466,94 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     }
   };
 
+  const handleQuickStockUpdate = async (product, availability_status) => {
+    if (product.availability_status === availability_status) return;
+    setUpdatingStockId(product.id);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/products/${product.id}/availability`, {
+        method: 'PATCH',
+        headers: authenticatedJsonHeaders(),
+        body: JSON.stringify({ availability_status })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update stock status.');
+      setProducts((current) => current.map((item) => item.id === product.id ? { ...item, ...data.product } : item));
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setUpdatingStockId(null);
+    }
+  };
+
+  const handleCreateOffer = async (event) => {
+    event.preventDefault();
+    if (!shopData?.id) return;
+    if (offerForm.valid_until && offerForm.valid_until < todayIso) {
+      setOfferMessage('Choose today or a future offer expiry date.');
+      return;
+    }
+    setOffersLoading(true);
+    setOfferMessage('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/offers`, { method: 'POST', headers: authenticatedJsonHeaders(), body: JSON.stringify(offerForm) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to publish offer.');
+      setOfferForm({ title: '', discount_text: '', description: '', valid_until: '' });
+      setOfferMessage('Offer published. Customers can now see it in Offers.');
+      await loadShopOffers();
+    } catch (error) { setOfferMessage(error.message); } finally { setOffersLoading(false); }
+  };
+
+  const handleUpdateOffer = async (event) => {
+    event.preventDefault();
+    if (!editingOffer) return;
+    if (editingOffer.valid_until && editingOffer.valid_until < todayIso) {
+      setOfferMessage('Choose today or a future offer expiry date.');
+      return;
+    }
+    setOffersLoading(true);
+    setOfferMessage('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/offers/${editingOffer.id}`, {
+        method: 'PATCH',
+        headers: authenticatedJsonHeaders(),
+        body: JSON.stringify({
+          title: editingOffer.title,
+          discount_text: editingOffer.discount_text,
+          description: editingOffer.description,
+          valid_until: editingOffer.valid_until || ''
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update offer.');
+      setEditingOffer(null);
+      setOfferMessage('Offer updated.');
+      setShopOffers((current) => current.map((offer) => offer.id === data.offer.id ? data.offer : offer));
+      void loadShopOffers().catch((error) => setOfferMessage(error.message));
+    } catch (error) { setOfferMessage(error.message); } finally { setOffersLoading(false); }
+  };
+
+  const updateOfferStatus = async (offer, is_active) => {
+    setOffersLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/offers/${offer.id}`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ is_active }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update offer.');
+      await loadShopOffers();
+    } catch (error) { setOfferMessage(error.message); } finally { setOffersLoading(false); }
+  };
+
+  const deleteOffer = async (offer) => {
+    if (!window.confirm(`Remove “${offer.title}”?`)) return;
+    setOffersLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/offers/${offer.id}`, { method: 'DELETE', headers: authenticatedJsonHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to remove offer.');
+      await loadShopOffers();
+    } catch (error) { setOfferMessage(error.message); } finally { setOffersLoading(false); }
+  };
+
   const handleDeleteProduct = async (product) => {
     if (!shopData?.id || !window.confirm(`Delete “${product.name}”? This cannot be undone.`)) return;
     setLoading(true);
@@ -424,28 +613,6 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     }
   };
 
-  const handleOpenStatus = async () => {
-    if (!shopData?.id) return;
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/open-status`, {
-        method: 'PATCH',
-        headers: authenticatedJsonHeaders(),
-        body: JSON.stringify({ is_open: !(shopData.is_open !== false) })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to update shop status.');
-      setShopData(data.shop);
-      const updatedSession = { ...session, shop: data.shop };
-      localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession));
-      onLoginSuccess?.(updatedSession);
-    } catch (error) {
-      alert(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (!session?.token && viewMode === 'choice') {
     return (
       <div className="max-w-md mx-auto my-12 p-8 bg-white rounded-2xl border border-slate-200 text-center shadow-sm font-sans">
@@ -472,15 +639,17 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </button>
         <h2 className="text-2xl font-bold text-slate-800 mb-1">Sign In to My Shop</h2>
         {errorMsg && <div className="p-3 mb-4 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">{errorMsg}</div>}
+        {resetNotice && <div className="p-3 mb-4 bg-sky-50 border border-sky-200 text-sky-700 text-xs rounded-xl">{resetNotice}</div>}
         <form onSubmit={handleLoginSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Email</label>
-            <input type="email" required placeholder="owner@shop.com" value={loginData.email} onChange={(e) => setLoginData({ ...loginData, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Phone number</label>
+            <input type="tel" inputMode="tel" autoComplete="tel" required placeholder="+919876543210" value={loginData.phone} onChange={(e) => setLoginData({ ...loginData, phone: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
-            <input type="password" required placeholder="••••••••" value={loginData.password} onChange={(e) => setLoginData({ ...loginData, password: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <div className="relative"><input type={showLoginPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Password" value={loginData.password} onChange={(e) => setLoginData({ ...loginData, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} aria-label={showLoginPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
           </div>
+          <button type="button" onClick={() => setResetNotice('Password reset through phone OTP will be available soon. Until then, please contact support to recover your account.')} className="-mt-1 text-left text-xs font-semibold text-emerald-700 hover:underline">Forgot password?</button>
           <button type="submit" disabled={loading} className="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-2">
             {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in...</> : 'Sign In'}
           </button>
@@ -502,8 +671,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             {errorMsg && <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">{errorMsg}</div>}
 
             <input type="text" required placeholder="Owner Name *" value={regForm.owner_name} onChange={(e) => setRegForm({ ...regForm, owner_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="email" required placeholder="Email *" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="password" required minLength={8} placeholder="Password (minimum 8 characters) *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="tel" inputMode="tel" autoComplete="tel" required placeholder="Account phone with country code, e.g. +919876543210 *" value={regForm.account_phone} onChange={(e) => setRegForm({ ...regForm, account_phone: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="email" autoComplete="email" placeholder="Email (optional)" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <div className="relative"><input type={showRegisterPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} placeholder="Password (minimum 8 characters) *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowRegisterPassword(!showRegisterPassword)} aria-label={showRegisterPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showRegisterPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
             
             <input type="text" required placeholder="Shop Name *" value={regForm.shop_name} onChange={(e) => setRegForm({ ...regForm, shop_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             
@@ -607,7 +777,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               </>
             )}
           </div>
-          <h1 className="text-2xl font-bold">{shopData?.name || 'My Shop'}</h1>
+          <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-bold">{shopData?.name || 'My Shop'}</h1>{shopData?.is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-400/15 px-2 py-1 text-[11px] font-bold text-sky-200"><BadgeCheck className="h-3.5 w-3.5" />Verified shop</span>}</div>
           <p className="text-xs text-slate-400 mt-1">
             Plan: <span className="text-emerald-400 font-bold uppercase">{shopData?.subscription_plan || 'Free'}</span> ({products.length} / {maxProductsAllowed >= 9999 ? '∞' : maxProductsAllowed} Products)
           </p>
@@ -617,7 +787,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <button onClick={openShopEditor} className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
             <Pencil className="w-4 h-4" /><span className="hidden sm:inline">Edit Shop</span>
           </button>
-          <button onClick={() => setBillingOpen(!billingOpen)} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition text-xs font-semibold">Billing</button>
+          <button onClick={() => setDashboardSection('billing')} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition text-xs font-semibold">Billing</button>
           <button 
             onClick={() => fetchProductsFromBackend(shopData?.id)} 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
@@ -639,7 +809,28 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       </div>
 
-      {billingOpen && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p><button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : 'Upgrade / switch'}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
+      <div className="mb-6 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"><button type="button" onClick={() => setDashboardSection('catalog')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'catalog' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Products & stock</button><button type="button" onClick={() => setDashboardSection('offers')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'offers' ? 'bg-orange-500 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Offers</button>{hasShopInsights && <button type="button" onClick={() => setDashboardSection('insights')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'insights' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Customer activity</button>}<button type="button" onClick={() => setDashboardSection('billing')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'billing' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Billing</button></div>
+
+      {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p><button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : 'Upgrade / switch'}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
+
+      {hasShopInsights && dashboardSection === 'insights' && <section className="mb-6 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><BarChart3 className="h-5 w-5 text-violet-600" /> Shop insights</h2><p className="mt-1 text-sm text-slate-600">{insightsPeriod === 'monthly' ? 'This month’s' : 'All-time'} activity from signed-in customers who engage with your shop.</p></div><div className="flex items-center gap-2"><div className="rounded-xl border border-violet-200 bg-white p-1"><button type="button" onClick={() => setInsightsPeriod('monthly')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'monthly' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>This month</button><button type="button" onClick={() => setInsightsPeriod('total')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'total' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>Total</button></div><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">Pro feature</span></div></div>{insightsLoading ? <div className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading insights…</div> : insightsError ? <p className="mt-4 text-sm text-rose-600">{insightsError}</p> : <><div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5"><div className="rounded-xl border border-violet-100 bg-white p-4"><Eye className="h-4 w-4 text-violet-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.views || 0}</p><p className="text-xs font-semibold text-slate-500">Catalog views</p><p className="mt-1 text-[11px] text-slate-400">{insights?.unique_viewers || 0} unique visitors</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><Navigation className="h-4 w-4 text-emerald-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.directions || 0}</p><p className="text-xs font-semibold text-slate-500">Directions</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><PhoneCall className="h-4 w-4 text-sky-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.calls || 0}</p><p className="text-xs font-semibold text-slate-500">Calls</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><MessageCircle className="h-4 w-4 text-emerald-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.whatsapp_messages || 0}</p><p className="text-xs font-semibold text-slate-500">WhatsApp chats</p></div><div className="rounded-xl border border-violet-200 bg-violet-600 p-4 text-white"><BarChart3 className="h-4 w-4 text-violet-100" /><p className="mt-3 text-2xl font-extrabold">{insights?.total_interactions || 0}</p><p className="text-xs font-semibold text-violet-100">Total interactions</p></div></div><p className="mt-3 text-[11px] text-slate-500">Interactions include catalog views, calls, directions, WhatsApp chats, and reviews. Personal customer details are never shown.</p></>}</section>}
+
+      {dashboardSection === 'offers' && <section className="mb-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><Tag className="h-5 w-5 text-orange-600" /> Shop offers</h2><p className="mt-1 text-sm text-slate-600">Publish offers that customers can see from the Offers menu.</p></div><span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">{shopOffers.filter((offer) => offer.is_active).length} active</span></div>
+        <form onSubmit={handleCreateOffer} className="mt-5 grid gap-3 rounded-xl border border-orange-100 bg-white p-4 md:grid-cols-2">
+          <input required maxLength="120" value={offerForm.title} onChange={(event) => setOfferForm({ ...offerForm, title: event.target.value })} placeholder="Offer title, e.g. Weekend grocery sale" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+          <input maxLength="80" value={offerForm.discount_text} onChange={(event) => setOfferForm({ ...offerForm, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+          <textarea maxLength="500" rows="2" value={offerForm.description} onChange={(event) => setOfferForm({ ...offerForm, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm md:col-span-2" />
+          <label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={offerForm.valid_until} onChange={(event) => setOfferForm({ ...offerForm, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label>
+          <button disabled={offersLoading} className="self-end rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-60">{offersLoading ? 'Saving…' : 'Publish offer'}</button>
+        </form>
+        {offerMessage && <p className={`mt-3 text-xs font-semibold ${offerMessage.includes('published') || offerMessage.includes('updated') ? 'text-emerald-700' : 'text-rose-600'}`}>{offerMessage}</p>}
+        <div className="mt-4 space-y-2">
+          {shopOffers.length === 0 ? <p className="rounded-xl border border-dashed border-orange-200 bg-white p-4 text-sm text-slate-500">No offers yet. Add your first offer above.</p> : shopOffers.map((offer) => <div key={offer.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-white p-3"><div><p className="font-bold text-slate-800">{offer.discount_text && <span className="mr-2 rounded bg-orange-100 px-1.5 py-0.5 text-xs text-orange-700">{offer.discount_text}</span>}{offer.title}</p><p className="mt-1 text-xs text-slate-500">{offer.is_active ? 'Visible to customers' : 'Hidden'}{offer.valid_until ? ` · Valid until ${new Date(`${offer.valid_until}T00:00:00`).toLocaleDateString()}` : ''}</p></div><div className="flex gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer({ ...offer, valid_until: offer.valid_until ? String(offer.valid_until).slice(0, 10) : '' })} className="rounded-lg border border-orange-200 px-3 py-1.5 text-xs font-bold text-orange-700">Edit</button><button type="button" disabled={offersLoading} onClick={() => updateOfferStatus(offer, !offer.is_active)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700">{offer.is_active ? 'Hide' : 'Show'}</button><button type="button" disabled={offersLoading} onClick={() => deleteOffer(offer)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700">Remove</button></div></div>)}
+        </div>
+      </section>}
+
+      {editingOffer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"><form onSubmit={handleUpdateOffer} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Edit offer</h2><p className="mt-1 text-sm text-slate-500">Update the details customers see. Expiry can only be today or a future date.</p></div><button type="button" onClick={() => setEditingOffer(null)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 grid gap-3"><input required maxLength="120" value={editingOffer.title || ''} onChange={(event) => setEditingOffer({ ...editingOffer, title: event.target.value })} placeholder="Offer title" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><input maxLength="80" value={editingOffer.discount_text || ''} onChange={(event) => setEditingOffer({ ...editingOffer, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><textarea maxLength="500" rows="3" value={editingOffer.description || ''} onChange={(event) => setEditingOffer({ ...editingOffer, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={editingOffer.valid_until || ''} onChange={(event) => setEditingOffer({ ...editingOffer, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Cancel</button><button disabled={offersLoading} className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{offersLoading ? 'Saving…' : 'Save changes'}</button></div></form></div>}
 
       {editingShop && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
@@ -660,7 +851,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {dashboardSection === 'catalog' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Add Product Form */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
           <h3 className="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
@@ -700,13 +891,16 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               <div className="flex items-center gap-2">
                 <label className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-600 cursor-pointer flex items-center justify-center gap-1 hover:bg-slate-100">
                   <Upload className="w-3.5 h-3.5 text-emerald-600" /> Upload Image File
-                  <input type="file" accept="image/*" onChange={(e) => handleImageFileUpload(e, false)} className="hidden" />
+                  <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => handleImageFileUpload(e, false)} className="hidden" />
                 </label>
               </div>
 
               <div className="text-[10px] text-slate-400 text-center">OR Paste Image URL</div>
 
               <input type="url" placeholder="https://example.com/image.jpg" value={newProduct.image_url} onChange={(e) => setNewProduct({ ...newProduct, image_url: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
+
+              <p className="text-center text-[10px] text-slate-500">Uploads are resized and optimized for faster loading.</p>
+              {imageUploadMessage && <p className={`text-center text-[10px] font-medium ${imageUploadMessage.includes('ready') ? 'text-emerald-700' : imageUploadMessage.includes('Optimizing') ? 'text-slate-500' : 'text-rose-600'}`}>{imageUploadMessage}</p>}
 
               {newProduct.image_url && (
                 <div className="mt-2 text-center">
@@ -725,9 +919,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
         {/* Product List */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center mb-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-bold text-slate-800 text-lg">Listed Products ({products.length})</h3>
-            {fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}
+            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search products" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
           </div>
 
           {products.length === 0 ? (
@@ -736,14 +930,19 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               <p className="text-sm font-medium text-slate-500">No products added yet.</p>
               <p className="text-xs text-slate-400 mt-1">Add your first product using the form on the left.</p>
             </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">No products match “{productSearch}”.</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {products.map((p) => (
-                <div key={p.id} className="flex items-center justify-between p-3 border border-slate-200 rounded-xl hover:border-emerald-300 transition bg-white shadow-2xs">
+              {filteredProducts.map((p) => (
+                <div key={p.id} className="border border-slate-200 rounded-xl p-3 transition hover:border-emerald-300 bg-white shadow-2xs">
+                  <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-hidden">
                     <img 
                       src={p.image_url && p.image_url.trim() !== '' ? p.image_url : productFallbackImage(p)}
                       alt={p.name} 
+                      loading="lazy"
+                      decoding="async"
                       className="w-16 h-16 object-cover rounded-lg bg-slate-100 border border-slate-100 shrink-0" 
                       onError={(e) => { e.target.src = productFallbackImage(p); }}
                     />
@@ -751,6 +950,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                       <h4 className="font-bold text-sm text-slate-800 truncate">{p.name}</h4>
                       <p className="text-sm font-extrabold text-emerald-600 mt-0.5">₹{p.price}</p>
                       <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${availabilityBadgeClass(p.availability_status)}`}>{availabilityLabel(p.availability_status)}</span>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500"><span className="inline-flex items-center gap-1 font-semibold text-amber-700"><Star className="h-3 w-3 fill-amber-400 text-amber-400" />{Number(p.average_rating || 0).toFixed(1)} ({p.review_count || 0})</span><span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />Added {p.created_at ? new Date(p.created_at).toLocaleDateString() : 'recently'}</span></div>
                     </div>
                   </div>
 
@@ -758,12 +958,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                     <button onClick={() => setEditingProduct(p)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer" title="Edit Product"><Pencil className="w-4 h-4" /></button>
                     <button onClick={() => handleDeleteProduct(p)} disabled={loading} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-50" title="Delete Product"><Trash2 className="w-4 h-4" /></button>
                   </div>
+                  </div>
+                  <label className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Quick stock update<select value={p.availability_status || 'available'} disabled={updatingStockId === p.id} onChange={(event) => handleQuickStockUpdate(p, event.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 disabled:opacity-50">{AVAILABILITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                 </div>
               ))}
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* EDIT PRODUCT MODAL POPUP */}
       {editingProduct && (
@@ -827,7 +1029,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 <div className="flex items-center gap-2">
                   <label className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-600 cursor-pointer flex items-center justify-center gap-1 hover:bg-slate-100">
                     <Upload className="w-3.5 h-3.5 text-emerald-600" /> Upload Image File
-                    <input type="file" accept="image/*" onChange={(e) => handleImageFileUpload(e, true)} className="hidden" />
+                    <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => handleImageFileUpload(e, true)} className="hidden" />
                   </label>
                 </div>
 
@@ -840,6 +1042,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                   onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })} 
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" 
                 />
+                <p className="text-center text-[10px] text-slate-500">Uploads are resized and optimized for faster loading.</p>
+                {imageUploadMessage && <p className={`text-center text-[10px] font-medium ${imageUploadMessage.includes('ready') ? 'text-emerald-700' : imageUploadMessage.includes('Optimizing') ? 'text-slate-500' : 'text-rose-600'}`}>{imageUploadMessage}</p>}
 
                 {editingProduct.image_url && (
                   <div className="mt-2 text-center">

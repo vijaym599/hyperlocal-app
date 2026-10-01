@@ -360,10 +360,11 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
     window.open(`tel:${String(phone).replace(/[^+\d]/g, '')}`, '_self');
   };
 
-  const handleWhatsApp = (phone, productName, shopName) => {
+  const handleWhatsApp = (phone, productName, shopName, shopId, productId) => {
     if (!phone) return;
     const number = String(phone).replace(/\D/g, '');
     if (!number) return;
+    saveActivity('whatsapp', shopId, productId);
     const message = productName
       ? `Hi, is ${productName} available at ${shopName || 'your shop'}?`
       : `Hi, I found ${shopName || 'your shop'} on Nearbuy. Is it open now?`;
@@ -632,6 +633,8 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                         <img
                           src={p.image_url || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300'}
                           alt={p.name || 'Product'}
+                          loading="lazy"
+                          decoding="async"
                           className="mb-3 h-44 w-full rounded-2xl object-cover transition duration-500 group-hover:scale-[1.02]"
                           onError={(e) => {
                             e.target.src = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
@@ -689,7 +692,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2">
                         {p.shop_phone && <button onClick={() => handleCall(p.shop_phone, p.shop_id, p.id)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
-                        {p.shop_whatsapp_number && <button onClick={() => handleWhatsApp(p.shop_whatsapp_number, p.name, p.shop_name)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
+                        {p.shop_whatsapp_number && <button onClick={() => handleWhatsApp(p.shop_whatsapp_number, p.name, p.shop_name, p.shop_id, p.id)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
                         <button onClick={() => handleGetDirections(p.shop_lat, p.shop_lng, p.shop_name, p.shop_address, p.shop_id, p.id)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
                       </div>
                     </div>
@@ -732,6 +735,8 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                         <img
                           src={shop.image_url}
                           alt={shop.name || 'Shop'}
+                          loading="lazy"
+                          decoding="async"
                           className="mb-3 h-44 w-full rounded-2xl object-cover transition duration-500 group-hover:scale-[1.02]"
                           onError={(e) => {
                             e.target.src = 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=300';
@@ -769,9 +774,9 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                       </div>
 
                       <div className="mt-4 grid grid-cols-2 gap-2">
-                        <button onClick={() => onOpenShop?.(shop)} className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"><Store className="h-3.5 w-3.5" /> View full shop catalog</button>
+                        <button onClick={() => { saveActivity('view', shop.id); onOpenShop?.(shop); }} className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"><Store className="h-3.5 w-3.5" /> View full shop catalog</button>
                         {shop.phone && <button onClick={() => handleCall(shop.phone, shop.id)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
-                        {shop.whatsapp_number && <button onClick={() => handleWhatsApp(shop.whatsapp_number, null, shop.name)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
+                        {shop.whatsapp_number && <button onClick={() => handleWhatsApp(shop.whatsapp_number, null, shop.name, shop.id)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
                         <button onClick={() => handleGetDirections(shop.lat, shop.lng, shop.name, shop.address, shop.id)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
                       </div>
                     </div>
@@ -804,7 +809,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
             <div className="mt-5 rounded-xl bg-slate-50 p-3"><p className="font-bold text-slate-800">{selectedProduct.shop_name}</p><p className="mt-1 text-sm text-slate-500">{selectedProduct.shop_address}</p></div>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {selectedProduct.shop_phone && <button onClick={() => handleCall(selectedProduct.shop_phone, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-slate-300 py-2.5 text-sm font-semibold text-slate-700"><Phone className="mr-1 inline h-4 w-4" />Call</button>}
-              {selectedProduct.shop_whatsapp_number && <button onClick={() => handleWhatsApp(selectedProduct.shop_whatsapp_number, selectedProduct.name, selectedProduct.shop_name)} className="rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-700"><MessageCircle className="mr-1 inline h-4 w-4" />WhatsApp</button>}
+              {selectedProduct.shop_whatsapp_number && <button onClick={() => handleWhatsApp(selectedProduct.shop_whatsapp_number, selectedProduct.name, selectedProduct.shop_name, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-700"><MessageCircle className="mr-1 inline h-4 w-4" />WhatsApp</button>}
               <button onClick={() => handleGetDirections(selectedProduct.shop_lat, selectedProduct.shop_lng, selectedProduct.shop_name, selectedProduct.shop_address, selectedProduct.shop_id, selectedProduct.id)} className="col-span-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white"><Navigation className="mr-1 inline h-4 w-4" />Get Directions</button>
             </div>
           </div>

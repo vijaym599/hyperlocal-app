@@ -39,9 +39,22 @@ const SUBSCRIPTION_LIMITS = {
   enterprise: 999999
 };
 const VERIFIED_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
+const INSIGHTS_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const AVAILABILITY_STATUSES = new Set(['available', 'low_stock', 'out_of_stock']);
 const productFallbackImage = (name, brand = '') => `https://loremflickr.com/640/480/${encodeURIComponent(`${brand || ''} ${name || 'local product'}`.trim())}`;
+const normalizePhone = (value) => String(value || '').trim().replace(/[\s().-]/g, '');
+const isValidPhone = (phone) => /^\+?[1-9]\d{7,14}$/.test(phone);
+const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const hasOversizedImagePayload = (value) => typeof value === 'string' && value.startsWith('data:image/') && value.length > 1_700_000;
+const isValidOfferDate = (value) => {
+  if (!value) return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return !Number.isNaN(parsed.getTime()) && parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day && parsed >= today;
+};
 
 const createToken = (user) => {
   if (!process.env.JWT_SECRET) {
@@ -49,7 +62,7 @@ const createToken = (user) => {
   }
 
   return jwt.sign(
-    { userId: user.id, email: user.email, userType: user.user_type || 'customer', isAdmin: Boolean(user.is_admin) },
+    { userId: user.id, phone: user.phone, userType: user.user_type || 'customer', isAdmin: Boolean(user.is_admin) },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -129,6 +142,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
     const { 
       owner_name, 
       email, 
+      account_phone,
       password, 
       shop_name, 
       category,
@@ -145,8 +159,8 @@ app.post('/api/auth/register-shop', async (req, res) => {
       payment_id 
     } = req.body;
 
-    if (!email || !password || !shop_name) {
-      return res.status(400).json({ error: 'Email, Password, and Shop Name are required!' });
+    if (!account_phone || !password || !shop_name) {
+      return res.status(400).json({ error: 'Account phone number, password, and shop name are required.' });
     }
     if (!Object.hasOwn(SUBSCRIPTION_LIMITS, selected_plan) || !payment_id) {
       return res.status(400).json({ error: 'Choose one of the four subscription plans to create a shop account.' });
@@ -156,7 +170,10 @@ app.post('/api/auth/register-shop', async (req, res) => {
       return res.status(400).json({ error: 'Password must contain at least 8 characters.' });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = normalizePhone(account_phone);
+    const cleanEmail = String(email || '').trim().toLowerCase() || null;
+    if (!isValidPhone(cleanPhone)) return res.status(400).json({ error: 'Enter a valid phone number with country code.' });
+    if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
     const parsedLatitude = Number(latitude);
     const parsedLongitude = Number(longitude);
     if (latitude === '' || longitude === '' || !Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude)) {
@@ -166,18 +183,21 @@ app.post('/api/auth/register-shop', async (req, res) => {
     client = await pool.connect();
     await client.query('BEGIN');
 
-    const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
+    const existingUser = await client.query(
+      'SELECT id FROM users WHERE phone = $1 OR ($2::text IS NOT NULL AND email = $2)',
+      [cleanPhone, cleanEmail]
+    );
     if (existingUser.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'This Email is already registered!' });
+      return res.status(409).json({ error: 'This phone number or email is already registered. Please sign in.' });
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
     const userResult = await client.query(
-      `INSERT INTO users (owner_name, email, password, user_type)
-       VALUES ($1, $2, $3, 'shop_owner')
-       RETURNING id, email, owner_name, user_type, is_admin`,
-      [owner_name?.trim() || '', cleanEmail, passwordHash]
+      `INSERT INTO users (owner_name, phone, email, password, user_type)
+       VALUES ($1, $2, $3, $4, 'shop_owner')
+       RETURNING id, phone, email, owner_name, user_type, is_admin`,
+      [owner_name?.trim() || '', cleanPhone, cleanEmail, passwordHash]
     );
 
     const newUser = userResult.rows[0];
@@ -230,15 +250,17 @@ const registerCustomer = async (req, res) => {
   try {
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'Authentication is not configured on the server.' });
     const name = String(req.body?.name || '').trim();
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const phone = normalizePhone(req.body?.phone);
+    const email = String(req.body?.email || '').trim().toLowerCase() || null;
     const password = String(req.body?.password || '');
-    if (!name || !email || password.length < 8) return res.status(400).json({ error: 'Name, email, and a password of at least 8 characters are required.' });
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existing.rows.length) return res.status(409).json({ error: 'This email is already registered. Please sign in.' });
+    if (!name || !isValidPhone(phone) || password.length < 8) return res.status(400).json({ error: 'Name, valid phone number, and a password of at least 8 characters are required.' });
+    if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
+    const existing = await pool.query('SELECT id FROM users WHERE phone = $1 OR ($2::text IS NOT NULL AND email = $2)', [phone, email]);
+    if (existing.rows.length) return res.status(409).json({ error: 'This phone number or email is already registered. Please sign in.' });
     const result = await pool.query(
-      `INSERT INTO users (owner_name, email, password, user_type) VALUES ($1, $2, $3, 'customer')
-       RETURNING id, owner_name, email, user_type, is_admin`,
-      [name, email, await bcrypt.hash(password, 12)]
+      `INSERT INTO users (owner_name, phone, email, password, user_type) VALUES ($1, $2, $3, $4, 'customer')
+       RETURNING id, owner_name, phone, email, user_type, is_admin`,
+      [name, phone, email, await bcrypt.hash(password, 12)]
     );
     const user = result.rows[0];
     return res.status(201).json({ message: 'Customer account created.', token: createToken(user), user, shop: null });
@@ -256,20 +278,20 @@ app.post('/api/auth/register-custormer', registerCustomer);
 // 2. LOGIN API (PostgreSQL)
 // ==========================================
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const phone = normalizePhone(req.body?.phone);
+  const { password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and Password missing!' });
+  if (!isValidPhone(phone) || !password) {
+    return res.status(400).json({ error: 'Phone number and password are required.' });
   }
   if (!process.env.JWT_SECRET) {
     return res.status(500).json({ error: 'Authentication is not configured on the server.' });
   }
 
   try {
-    const cleanEmail = email.trim().toLowerCase();
-    const userRes = await pool.query('SELECT * FROM users WHERE email = $1', [cleanEmail]);
+    const userRes = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
     if (userRes.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid Email ID or Password!' });
+      return res.status(401).json({ error: 'Invalid phone number or password.' });
     }
 
     const user = userRes.rows[0];
@@ -280,7 +302,7 @@ app.post('/api/auth/login', async (req, res) => {
       : password === storedPassword;
 
     if (!passwordMatches) {
-      return res.status(401).json({ error: 'Invalid Email ID or Password!' });
+      return res.status(401).json({ error: 'Invalid phone number or password.' });
     }
 
     // Upgrade legacy plaintext passwords on the account's next successful login.
@@ -298,7 +320,7 @@ app.post('/api/auth/login', async (req, res) => {
     return res.json({
       message: 'Login successful!',
       token: createToken(user),
-      user: { id: user.id, email: user.email, owner_name: user.owner_name, user_type: user.user_type || (shop ? 'shop_owner' : 'customer'), is_admin: user.is_admin },
+      user: { id: user.id, phone: user.phone, email: user.email, owner_name: user.owner_name, user_type: user.user_type || (shop ? 'shop_owner' : 'customer'), is_admin: user.is_admin },
       shop: shop
     });
 
@@ -315,7 +337,13 @@ app.get('/api/shops/:shopId/products', async (req, res) => {
   const shopId = req.params.shopId;
 
   try {
-    const productsRes = await pool.query('SELECT * FROM products WHERE shop_id = $1 ORDER BY id DESC', [shopId]);
+    const productsRes = await pool.query(
+      `SELECT p.*,
+        COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
+        (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count
+       FROM products p WHERE p.shop_id = $1 ORDER BY p.id DESC`,
+      [shopId]
+    );
     return res.json({ products: productsRes.rows });
   } catch (err) {
     console.error('Fetch Products Error:', err);
@@ -381,6 +409,7 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
   if (availability_status && !AVAILABILITY_STATUSES.has(availability_status)) {
     return res.status(400).json({ error: 'Invalid availability status.' });
   }
+  if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Product image is too large. Please upload an optimized image under 1.2 MB.' });
 
   try {
     const shopRes = await pool.query('SELECT * FROM shops WHERE id = $1', [shopId]);
@@ -442,6 +471,7 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
       const name = String(item.name || '').trim(); const price = Number(item.price);
       if (!name || !Number.isFinite(price) || price < 0) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
       const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw new Error(`Row ${index + 1} has an invalid availability status.`);
+      if (hasOversizedImagePayload(item.image_url)) throw new Error(`Row ${index + 1} has an image that is too large.`);
       const brand = String(item.brand || '').trim(); const image = String(item.image_url || '').trim() || productFallbackImage(name, brand);
       return [shopId, name, String(item.description || '').trim() || null, brand || null, price, image, status];
     });
@@ -536,6 +566,28 @@ app.patch('/api/shops/:shopId/open-status', authenticate, async (req, res) => {
   }
 });
 
+// Quick stock status update from the shop dashboard.
+app.patch('/api/products/:id/availability', authenticate, async (req, res) => {
+  const productId = Number(req.params.id);
+  const { availability_status } = req.body || {};
+  if (!productId || !AVAILABILITY_STATUSES.has(availability_status)) return res.status(400).json({ error: 'Choose a valid stock status.' });
+  try {
+    const result = await pool.query(
+      `UPDATE products p
+       SET availability_status = $1, availability_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       FROM shops s
+       WHERE p.id = $2 AND p.shop_id = s.id AND s.user_id = $3
+       RETURNING p.*`,
+      [availability_status, productId, req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Product not found, or you do not own its shop.' });
+    return res.json({ message: 'Stock status updated.', product: result.rows[0] });
+  } catch (err) {
+    console.error('Product stock update error:', err);
+    return res.status(500).json({ error: 'Unable to update stock status.' });
+  }
+});
+
 // ==========================================
 // 6. EDIT / UPDATE PRODUCT (FIXED for PostgreSQL)
 // ==========================================
@@ -550,6 +602,7 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
   if (availability_status && !AVAILABILITY_STATUSES.has(availability_status)) {
     return res.status(400).json({ error: 'Invalid availability status.' });
   }
+  if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Product image is too large. Please upload an optimized image under 1.2 MB.' });
 
   try {
     const defaultImg = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
@@ -613,6 +666,100 @@ app.delete('/api/products/:id', authenticate, async (req, res) => {
 });
 
 // ==========================================
+// SHOP OFFERS
+// ==========================================
+app.get('/api/offers', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT o.*, s.name AS shop_name, s.category AS shop_category, s.address, s.phone, s.whatsapp_number,
+              s.latitude, s.longitude, s.google_map_link, s.is_verified
+       FROM shop_offers o
+       JOIN shops s ON s.id = o.shop_id
+       WHERE o.is_active = TRUE AND (o.valid_until IS NULL OR o.valid_until >= CURRENT_DATE)
+       ORDER BY o.created_at DESC
+       LIMIT 100`
+    );
+    return res.json({ offers: result.rows });
+  } catch (err) {
+    console.error('Offers fetch error:', err);
+    return res.status(500).json({ error: 'Unable to load offers.' });
+  }
+});
+
+app.get('/api/shops/:shopId/offers', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!shopId) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only manage offers for your own shop.' });
+    const result = await pool.query('SELECT * FROM shop_offers WHERE shop_id = $1 ORDER BY created_at DESC', [shopId]);
+    return res.json({ offers: result.rows });
+  } catch (err) { return res.status(500).json({ error: 'Unable to load shop offers.' }); }
+});
+
+app.post('/api/shops/:shopId/offers', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  const title = String(req.body?.title || '').trim();
+  const description = String(req.body?.description || '').trim();
+  const discountText = String(req.body?.discount_text || '').trim();
+  const validUntil = String(req.body?.valid_until || '').trim() || null;
+  if (!shopId || !title || title.length > 120 || description.length > 500 || discountText.length > 80) return res.status(400).json({ error: 'Provide an offer title under 120 characters and keep offer details concise.' });
+  if (!isValidOfferDate(validUntil)) return res.status(400).json({ error: 'Offer expiry date must be today or a future valid date.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only add offers to your own shop.' });
+    const result = await pool.query(
+      `INSERT INTO shop_offers (shop_id, title, description, discount_text, valid_until)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [shopId, title, description || null, discountText || null, validUntil]
+    );
+    return res.status(201).json({ message: 'Offer published.', offer: result.rows[0] });
+  } catch (err) { return res.status(500).json({ error: 'Unable to publish offer.' }); }
+});
+
+app.patch('/api/offers/:offerId', authenticate, async (req, res) => {
+  const offerId = Number(req.params.offerId);
+  const { is_active } = req.body || {};
+  if (!offerId) return res.status(400).json({ error: 'A valid offer is required.' });
+  try {
+    if (typeof is_active === 'boolean') {
+      const result = await pool.query(
+        `UPDATE shop_offers o SET is_active = $1, updated_at = CURRENT_TIMESTAMP
+         FROM shops s WHERE o.id = $2 AND o.shop_id = s.id AND s.user_id = $3 RETURNING o.*`,
+        [is_active, offerId, req.user.userId]
+      );
+      if (!result.rows.length) return res.status(404).json({ error: 'Offer not found, or you do not own this shop.' });
+      return res.json({ message: 'Offer status updated.', offer: result.rows[0] });
+    }
+    const title = String(req.body?.title || '').trim();
+    const description = String(req.body?.description || '').trim();
+    const discountText = String(req.body?.discount_text || '').trim();
+    const validUntil = String(req.body?.valid_until || '').trim() || null;
+    if (!title || title.length > 120 || description.length > 500 || discountText.length > 80) return res.status(400).json({ error: 'Provide an offer title under 120 characters and keep offer details concise.' });
+    if (!isValidOfferDate(validUntil)) return res.status(400).json({ error: 'Offer expiry date must be today or a future valid date.' });
+    const result = await pool.query(
+      `UPDATE shop_offers o SET title = $1, description = $2, discount_text = $3, valid_until = $4, updated_at = CURRENT_TIMESTAMP
+       FROM shops s WHERE o.id = $5 AND o.shop_id = s.id AND s.user_id = $6 RETURNING o.*`,
+      [title, description || null, discountText || null, validUntil, offerId, req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Offer not found, or you do not own this shop.' });
+    return res.json({ message: 'Offer updated.', offer: result.rows[0] });
+  } catch (err) { return res.status(500).json({ error: 'Unable to update offer.' }); }
+});
+
+app.delete('/api/offers/:offerId', authenticate, async (req, res) => {
+  const offerId = Number(req.params.offerId);
+  if (!offerId) return res.status(400).json({ error: 'A valid offer is required.' });
+  try {
+    const result = await pool.query(
+      `DELETE FROM shop_offers o USING shops s
+       WHERE o.id = $1 AND o.shop_id = s.id AND s.user_id = $2 RETURNING o.id`,
+      [offerId, req.user.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Offer not found, or you do not own this shop.' });
+    return res.json({ message: 'Offer removed.' });
+  } catch (err) { return res.status(500).json({ error: 'Unable to remove offer.' }); }
+});
+
+// ==========================================
 // 6. GET SINGLE PRODUCT BY ID
 // ==========================================
 app.get('/api/products/:id', async (req, res) => {
@@ -662,7 +809,7 @@ app.post('/api/activity/:action', authenticate, requireCustomer, async (req, res
   const action = req.params.action;
   const shopId = Number(req.body?.shop_id) || null;
   const productId = Number(req.body?.product_id) || null;
-  if (!['call', 'directions'].includes(action) || !shopId) return res.status(400).json({ error: 'A valid shop activity is required.' });
+  if (!['view', 'call', 'directions', 'whatsapp'].includes(action) || !shopId) return res.status(400).json({ error: 'A valid shop activity is required.' });
   try {
     const shop = await pool.query('SELECT id, name FROM shops WHERE id = $1', [shopId]);
     if (!shop.rows.length) return res.status(404).json({ error: 'Shop not found.' });
@@ -684,6 +831,40 @@ app.get('/api/activity', authenticate, requireCustomer, async (req, res) => {
     );
     return res.json({ activities: result.rows });
   } catch (err) { return res.status(500).json({ error: 'Unable to load activity.' }); }
+});
+
+// Shop owners on Pro and higher can view aggregate engagement for their own shop.
+app.get('/api/shops/:shopId/insights', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  const period = String(req.query.period || 'total').toLowerCase();
+  if (!shopId) return res.status(400).json({ error: 'A valid shop is required.' });
+  if (!['monthly', 'total'].includes(period)) return res.status(400).json({ error: 'Insights period must be monthly or total.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view insights for your own shop.' });
+    const shopResult = await pool.query('SELECT subscription_plan FROM shops WHERE id = $1', [shopId]);
+    const shop = shopResult.rows[0];
+    if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+    if (!INSIGHTS_SUBSCRIPTION_PLANS.has(shop.subscription_plan)) return res.status(403).json({ error: 'Shop insights are available on Pro, Advance, and Enterprise plans.' });
+
+    const periodFilter = period === 'monthly' ? "AND created_at >= DATE_TRUNC('month', CURRENT_TIMESTAMP)" : '';
+    const result = await pool.query(
+      `SELECT
+        COUNT(*) FILTER (WHERE action_type = 'view')::int AS views,
+        COUNT(DISTINCT user_id) FILTER (WHERE action_type = 'view')::int AS unique_viewers,
+        COUNT(*) FILTER (WHERE action_type = 'directions')::int AS directions,
+        COUNT(*) FILTER (WHERE action_type = 'call')::int AS calls,
+        COUNT(*) FILTER (WHERE action_type = 'whatsapp')::int AS whatsapp_messages,
+        COUNT(*) FILTER (WHERE action_type = 'review')::int AS reviews,
+        COUNT(*) FILTER (WHERE action_type IN ('view', 'directions', 'call', 'whatsapp', 'review'))::int AS total_interactions
+       FROM user_activities
+       WHERE shop_id = $1 ${periodFilter}`,
+      [shopId]
+    );
+    return res.json({ insights: result.rows[0], period });
+  } catch (err) {
+    console.error('Shop insights error:', err);
+    return res.status(500).json({ error: 'Unable to load shop insights.' });
+  }
 });
 
 // ==========================================
