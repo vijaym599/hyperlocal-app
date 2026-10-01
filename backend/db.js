@@ -9,16 +9,6 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-// Server thodangumpodhe Connection-ai sodhikka
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error('Database Connection Error:', err.message);
-  } else {
-    console.log('PostgreSQL Database Connected Successfully!');
-    release();
-  }
-});
-
 // Database Tables Automatic Creation Logic
 const initDb = async () => {
   try {
@@ -226,10 +216,9 @@ const initDb = async () => {
     console.log('PostgreSQL Tables Verified & Ready!');
   } catch (err) {
     console.error('Table Creation Error:', err.message);
+    throw err;
   }
 };
 
-// App run aagumbodhu tables create aagum
-initDb();
-
 module.exports = pool;
+module.exports.initDb = initDb;

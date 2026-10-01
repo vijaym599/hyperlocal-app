@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getRole, homeTab, resolveTab } from './session.mjs';
 import Navbar from './components/Navbar';
 import NearbySearch from './components/NearbySearch';
 import MyShop from './components/MyShop';
@@ -14,8 +15,8 @@ import PricingPage from './components/PricingPage';
 import Offers from './components/Offers';
 
 export default function App() {
-  // 'explore', 'my-shop', or 'about'
-  const [activeTab, setActiveTab] = useState('explore'); 
+  // Resolve the requested page against the current account's access.
+  const [requestedTab, setActiveTab] = useState(null);
   const [portfolioShop, setPortfolioShop] = useState(null);
   
   const [session, setSession] = useState(() => {
@@ -30,14 +31,17 @@ export default function App() {
   const handleLoginSuccess = (sessionData) => {
     localStorage.setItem('hyperlocal-session', JSON.stringify(sessionData));
     setSession(sessionData);
+    setActiveTab(homeTab(sessionData));
   };
 
   const handleLogout = () => {
     localStorage.removeItem('hyperlocal-session');
     setSession(null);
+    setActiveTab('explore');
   };
 
-  const role = session?.user?.is_admin ? 'admin' : (session?.user?.user_type === 'shop_owner' || session?.shop ? 'shop_owner' : (session?.token ? 'customer' : 'guest'));
+  const role = getRole(session);
+  const activeTab = resolveTab(requestedTab || homeTab(session), session, portfolioShop);
 
   return (
     <div className="min-h-screen bg-transparent font-sans text-slate-800 flex flex-col">
@@ -59,7 +63,7 @@ export default function App() {
 
         {activeTab === 'shop-portfolio' && (role === 'guest' || role === 'customer') && portfolioShop && <ShopPortfolio shopId={portfolioShop.id} initialShop={portfolioShop} onBack={() => setActiveTab('explore')} />}
 
-        {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={(sessionData) => { handleLoginSuccess(sessionData); setActiveTab(sessionData.shop ? 'my-shop' : 'explore'); }} onChooseShop={() => setActiveTab('my-shop')} onBack={() => setActiveTab('explore')} />}
+        {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={handleLoginSuccess} onChooseShop={() => setActiveTab('my-shop')} onBack={() => setActiveTab('explore')} />}
 
         {activeTab === 'activity' && role === 'customer' && <UserActivity session={session} />}
         

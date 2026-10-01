@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 
 const SUBSCRIPTION_PLANS = [
@@ -162,18 +163,23 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {})
   });
 
-  const isOpenBySchedule = (opening, closing) => {
-    if (!opening || !closing) return null;
-    const minutes = (value) => { const [h, m] = String(value).slice(0, 5).split(':').map(Number); return h * 60 + m; };
-    const now = new Date(); const current = now.getHours() * 60 + now.getMinutes(); const start = minutes(opening); const end = minutes(closing);
-    return start <= end ? current >= start && current < end : current >= start || current < end;
-  };
-
   useEffect(() => {
     if (!shopData?.id) return undefined;
-    const sync = async () => { const state = isOpenBySchedule(shopData.opening_time, shopData.closing_time); const next = state === null ? shopData.is_open !== false : state; setAutoOpen(next); if (state !== null && next !== (shopData.is_open !== false)) { const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/open-status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ is_open: next }) }); if (response.ok) { const data = await response.json(); setShopData(data.shop); } } };
-    sync(); const timer = window.setInterval(sync, 60000); return () => window.clearInterval(timer);
-  }, [shopData?.id, shopData?.opening_time, shopData?.closing_time, shopData?.is_open, session?.token]);
+    const controller = new AbortController();
+    const sync = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/portfolio`, { signal: controller.signal, cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        setAutoOpen(data.shop.is_open !== false);
+      } catch (error) {
+        if (error.name !== 'AbortError') console.error('Shop status refresh failed:', error);
+      }
+    };
+    void sync();
+    const timer = window.setInterval(sync, 60000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [shopData?.id, shopData?.opening_time, shopData?.closing_time]);
 
   useEffect(() => {
     if (!shopData?.id || !session?.token || !INSIGHT_PLANS.has(shopData.subscription_plan)) return;
@@ -267,13 +273,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const lines = String(reader.result || '').split(/\r?\n/).filter(Boolean);
-        const headers = lines.shift().split(',').map((value) => value.trim().toLowerCase());
-        if (!headers.includes('name') || !headers.includes('price')) throw new Error('CSV must include name and price columns.');
-        const productsToUpload = lines.map((line) => {
-          const values = line.split(',').map((value) => value.trim());
-          return Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
-        }).filter((product) => product.name);
+        const productsToUpload = parseProductCsv(reader.result);
         if (!productsToUpload.length) throw new Error('No products found in this CSV.');
         setLoading(true); setBulkMessage('Uploading products…');
         const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/products/bulk`, { method: 'POST', headers: authenticatedJsonHeaders(), body: JSON.stringify({ products: productsToUpload }) });

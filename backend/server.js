@@ -1,2 +1,2 @@
-// Backward-compatible entry point. The real API lives in index.js.
-require('./index');
+// Backward-compatible entry point.
+void require('./index').startServer();

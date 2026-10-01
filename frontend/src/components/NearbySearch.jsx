@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X } from 'lucide-react';
+import ProductSkeleton from './ProductSkeleton';
+import { readDiscoveryCache, writeDiscoveryCache, discoveryKey } from '../discoveryCache.mjs';
 import { API_BASE_URL } from '../config';
 
 // Instagram Story Style Categories Data
@@ -25,7 +27,7 @@ const CATEGORIES = [
   { id: 'others', name: 'More', icon: '✨', bg: 'from-slate-400 to-slate-600' },
 ];
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 10;
 
 const normaliseCategory = (value) => {
   const category = String(value || '').toLowerCase();
@@ -34,7 +36,7 @@ const normaliseCategory = (value) => {
   if (category.includes('electronic') || category.includes('mobile')) return 'electronics';
   if (category.includes('pharmacy') || category.includes('health')) return 'pharmacy';
   if (category.includes('bakery')) return 'bakery';
-  if (category.includes('food') || category.includes('dining') || category.includes('cafe')) return 'restaurant';
+  if (category.includes('food') || category.includes('dining') || category.includes('cafe') || category.includes('restaurant')) return 'restaurant';
   if (category.includes('hardware') || category.includes('electrical')) return 'hardware';
   if (category.includes('beauty') || category.includes('cosmetic') || category.includes('salon')) return 'beauty';
   if (category.includes('home') || category.includes('furniture')) return 'home';
@@ -46,7 +48,7 @@ const normaliseCategory = (value) => {
   if (category.includes('fitness') || category.includes('gym') || category.includes('sports')) return 'fitness';
   if (category.includes('service') || category.includes('repair') || category.includes('professional')) return 'services';
   if (category.includes('grocery') || category.includes('supermarket') || category.includes('general')) return 'grocery';
-  return category || 'others';
+  return 'others';
 };
 
 // Helper: Calculate Distance in KM (Returns Number for Sorting)
@@ -111,7 +113,7 @@ const Pagination = ({ page, pageCount, setPage, itemName }) => {
   if (pageCount <= 1) return null;
   return (
     <div className="mt-5 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-      <span className="font-medium text-slate-500">Page {page} of {pageCount} · 12 {itemName} per page</span>
+      <span className="font-medium text-slate-500">Page {page} of {pageCount} · {PAGE_SIZE} {itemName} per page</span>
       <div className="flex gap-2">
         <button onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /> Previous</button>
         <button onClick={() => setPage((current) => Math.min(pageCount, current + 1))} disabled={page === pageCount} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Next <ChevronRight className="h-3.5 w-3.5" /></button>
@@ -120,7 +122,55 @@ const Pagination = ({ page, pageCount, setPage, itemName }) => {
   );
 };
 
+const mapDiscoveryResults = (results) => {
+  const uniqueShops = new Map();
+
+  const extractedProducts = results.map((product) => {
+    const category = normaliseCategory(product.shop_category);
+    const distance = Number(product.distance_km);
+    const shop = {
+      id: product.shop_id,
+      name: product.shop_name || 'Local Shop',
+      address: product.address || 'Nearby',
+      category,
+      categoryLabel: product.shop_category || 'Other',
+      phone: product.phone || null,
+      whatsapp_number: product.whatsapp_number || null,
+      opening_hours: product.opening_hours || null,
+      is_open: Boolean(product.is_open),
+      is_verified: Boolean(product.is_verified),
+      average_rating: Number(product.shop_average_rating || 0),
+      review_count: Number(product.shop_review_count || 0),
+      lat: Number.isFinite(Number(product.latitude)) ? Number(product.latitude) : null,
+      lng: Number.isFinite(Number(product.longitude)) ? Number(product.longitude) : null,
+      backendDistance: Number.isFinite(distance) ? distance : null,
+      image_url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=300',
+      total_products: 0
+    };
+    const currentShop = uniqueShops.get(shop.id);
+    uniqueShops.set(shop.id, { ...shop, total_products: (currentShop?.total_products || 0) + 1 });
+
+    return {
+      ...product,
+      shop_name: shop.name,
+      shop_id: shop.id,
+      shop_lat: shop.lat,
+      shop_lng: shop.lng,
+      shop_address: shop.address,
+      shop_phone: shop.phone,
+      shop_whatsapp_number: shop.whatsapp_number,
+      shop_is_open: shop.is_open,
+      shop_is_verified: shop.is_verified,
+      category,
+      backendDistance: shop.backendDistance
+    };
+  });
+
+  return { products: extractedProducts, shops: Array.from(uniqueShops.values()) };
+};
+
 const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
+  const [initialCache] = useState(() => readDiscoveryCache(localStorage, API_BASE_URL));
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
   const [radiusKm, setRadiusKm] = useState('');
@@ -143,14 +193,28 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
     try { return JSON.parse(localStorage.getItem('nearbuy-favorites')) || []; } catch { return []; }
   });
   
-  const [shops, setShops] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [userLocation, setUserLocation] = useState(null);
-  const [locationError, setLocationError] = useState(null);
-  const [placeName, setPlaceName] = useState('Current location');
-  const [gettingLocation, setGettingLocation] = useState(false);
+  const [shops, setShops] = useState(() => mapDiscoveryResults(initialCache?.results || []).shops);
+  const [products, setProducts] = useState(() => mapDiscoveryResults(initialCache?.results || []).products);
+  const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(Boolean(initialCache?.has_more));
   const [productPage, setProductPage] = useState(1);
+  const [cachedResults, setCachedResults] = useState(Boolean(initialCache));
+  const [resultsKey, setResultsKey] = useState(() => discoveryKey(initialCache?.location));
+  const [areaQuery, setAreaQuery] = useState('');
+  const [areaPlaces, setAreaPlaces] = useState([]);
+  const [areaError, setAreaError] = useState('');
+  const [findingArea, setFindingArea] = useState(false);
+  const [showAreaPicker, setShowAreaPicker] = useState(false);
+  const locationVersion = useRef(0);
+  const areaController = useRef(null);
+  const [searchError, setSearchError] = useState('');
+  const searchController = useRef(null);
+  const searchVersion = useRef(0);
+  const [userLocation, setUserLocation] = useState(initialCache?.location || null);
+  const usableLocationRef = useRef(initialCache?.location || null);
+  const [locationError, setLocationError] = useState(null);
+  const [placeName, setPlaceName] = useState(initialCache?.location?.name || 'Current location');
+  const [gettingLocation, setGettingLocation] = useState(initialCache?.location?.source !== 'manual');
   const [shopPage, setShopPage] = useState(1);
   const categoryRailRef = useRef(null);
 
@@ -179,7 +243,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
           setShops((current) => current.map((shop) => shop.id === shopId ? { ...shop, average_rating: average, review_count: count } : shop));
         }
       }
-      if (userLocation) fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all');
+      if (userLocation) fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation);
     } catch (error) { setReviewMessage(error.message); } finally { setSavingReview(false); }
   };
 
@@ -201,115 +265,104 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   };
 
   // Fetch a product-first, radius-limited result set from the server.
-  const fetchNearbyData = useCallback(async (lat, lng, query = '', radius = '', availability = 'all') => {
+  const fetchNearbyData = useCallback(async (lat, lng, query = '', radius = '', availability = 'all', category = 'all', page = 1, location = null) => {
+    searchController.current?.abort();
+    const controller = new AbortController();
+    searchController.current = controller;
+    const version = ++searchVersion.current;
     setLoading(true);
+    setSearchError('');
     try {
-      const params = new URLSearchParams({ lat: String(lat), lng: String(lng), query, availability });
+      const params = new URLSearchParams({ lat: String(lat), lng: String(lng), query, availability, category, page: String(page), limit: String(PAGE_SIZE) });
       if (radius) params.set('radius', radius);
       const url = `${API_BASE_URL}/api/search/products?${params}`;
 
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) throw new Error(`Search request failed with status ${res.status}`);
 
       const data = await res.json();
+      if (version !== searchVersion.current) return;
       const results = Array.isArray(data.results) ? data.results : [];
-      const uniqueShops = new Map();
-
-      const extractedProducts = results.map((product) => {
-        const category = normaliseCategory(product.shop_category);
-        const distance = Number(product.distance_km);
-        const shop = {
-          id: product.shop_id,
-          name: product.shop_name || 'Local Shop',
-          address: product.address || 'Nearby',
-          category,
-          categoryLabel: product.shop_category || 'Other',
-          phone: product.phone || null,
-          whatsapp_number: product.whatsapp_number || null,
-          opening_hours: product.opening_hours || null,
-          is_open: Boolean(product.is_open),
-          is_verified: Boolean(product.is_verified),
-          average_rating: Number(product.shop_average_rating || 0),
-          review_count: Number(product.shop_review_count || 0),
-          lat: Number.isFinite(Number(product.latitude)) ? Number(product.latitude) : null,
-          lng: Number.isFinite(Number(product.longitude)) ? Number(product.longitude) : null,
-          backendDistance: Number.isFinite(distance) ? distance : null,
-          image_url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=300',
-          total_products: 0
-        };
-        const currentShop = uniqueShops.get(shop.id);
-        uniqueShops.set(shop.id, { ...shop, total_products: (currentShop?.total_products || 0) + 1 });
-
-        return {
-          ...product,
-          shop_name: shop.name,
-          shop_id: shop.id,
-          shop_lat: shop.lat,
-          shop_lng: shop.lng,
-          shop_address: shop.address,
-          shop_phone: shop.phone,
-          shop_whatsapp_number: shop.whatsapp_number,
-          shop_is_open: shop.is_open,
-          shop_is_verified: shop.is_verified,
-          category,
-          backendDistance: shop.backendDistance
-        };
-      });
-
-      setProducts(extractedProducts);
-      setShops(Array.from(uniqueShops.values()));
+      const mapped = mapDiscoveryResults(results);
+      setProducts(mapped.products);
+      setShops(mapped.shops);
+      setHasMore(Boolean(data.has_more));
+      setProductPage(page);
+      setCachedResults(false);
+      setResultsKey(discoveryKey({ lat, lng }, query, radius, availability, category));
+      if (page === 1) setShopPage(1);
+      if (page === 1 && !query && !radius && availability === 'all' && category === 'all') {
+        writeDiscoveryCache(localStorage, API_BASE_URL, location || { lat, lng, source: 'gps' }, data);
+      }
     } catch (err) {
+      if (err.name === 'AbortError' || version !== searchVersion.current) return;
+      setSearchError('Unable to search nearby products. Please try again.');
       console.error('Error fetching nearby products:', err);
-      setProducts([]);
-      setShops([]);
     } finally {
-      setLoading(false);
+      if (version === searchVersion.current) setLoading(false);
     }
   }, []);
 
   const getUserLocation = useCallback(() => {
+    const version = ++locationVersion.current;
     setGettingLocation(true);
     setLocationError(null);
 
     if (!navigator.geolocation) {
-      setLocationError('Your browser does not support location services.');
+      if (!usableLocationRef.current) {
+        setLocationError('Your browser does not support location services.');
+        setShowAreaPicker(true);
+      }
       setGettingLocation(false);
-      setProducts([]);
-      setShops([]);
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        setUserLocation({ lat: coords.latitude, lng: coords.longitude });
+        if (version !== locationVersion.current) return;
+        const location = { lat: coords.latitude, lng: coords.longitude, source: 'gps' };
+        usableLocationRef.current = location;
+        setUserLocation(location);
+        setLocationError(null);
+        setPlaceName('Current location');
+        setShowAreaPicker(false);
         setGettingLocation(false);
       },
       (error) => {
+        if (version !== locationVersion.current) return;
         console.error('Location Error:', error);
-        setLocationError('We could not get your location. Turn on GPS and try again.');
+        if (usableLocationRef.current) {
+          setLocationError(null);
+        } else {
+          setLocationError('We could not get your location. Turn on GPS or choose an area.');
+          setShowAreaPicker(true);
+        }
         setGettingLocation(false);
-        setProducts([]);
-        setShops([]);
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   }, []);
 
   useEffect(() => {
+    if (initialCache?.location?.source === 'manual') return undefined;
     const locationTimer = window.setTimeout(getUserLocation, 0);
-    return () => window.clearTimeout(locationTimer);
-  }, [getUserLocation]);
+    return () => { window.clearTimeout(locationTimer); locationVersion.current += 1; };
+  }, [getUserLocation, initialCache]);
 
   useEffect(() => {
     if (!userLocation) return undefined;
     const searchTimer = window.setTimeout(() => {
       fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all');
-    }, 250);
-    return () => window.clearTimeout(searchTimer);
-  }, [availableOnly, fetchNearbyData, radiusKm, searchQuery, userLocation]);
+    }, searchQuery ? 250 : 0);
+    return () => {
+      window.clearTimeout(searchTimer);
+      searchController.current?.abort();
+      searchVersion.current += 1;
+    };
+  }, [activeCategory, availableOnly, fetchNearbyData, radiusKm, searchQuery, userLocation]);
 
   useEffect(() => {
-    if (!userLocation) return undefined;
+    if (!userLocation || userLocation.source === 'manual') return undefined;
     const controller = new AbortController();
     fetch(`${API_BASE_URL}/api/location/reverse?lat=${userLocation.lat}&lng=${userLocation.lng}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('Location name unavailable')))
@@ -339,6 +392,42 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       controller.abort();
     };
   }, [radiusKm, searchQuery, userLocation]);
+
+  useEffect(() => () => { areaController.current?.abort(); }, []);
+
+  const findArea = async (event) => {
+    event.preventDefault();
+    areaController.current?.abort();
+    const controller = new AbortController();
+    areaController.current = controller;
+    setFindingArea(true); setAreaError(''); setAreaPlaces([]);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/location/search?${new URLSearchParams({ query: areaQuery.trim() })}`, { signal: controller.signal });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Area search failed (${response.status}). Please try again.`);
+      if (controller.signal.aborted) return;
+      setAreaPlaces(data.places || []);
+      if (!data.places?.length) setAreaError('No area found. Try a nearby town or pincode.');
+    } catch (error) {
+      if (error.name !== 'AbortError') setAreaError(error.message);
+    } finally { if (!controller.signal.aborted) setFindingArea(false); }
+  };
+
+  const chooseArea = (place) => {
+    locationVersion.current += 1;
+    searchController.current?.abort(); searchVersion.current += 1;
+    setGettingLocation(false); setLocationError(null); setSearchError('');
+    setProducts([]); setShops([]); setCachedResults(false); setHasMore(false);
+    const location = { lat: place.lat, lng: place.lng, name: place.name, source: 'manual' };
+    usableLocationRef.current = location;
+    setUserLocation(location);
+    setPlaceName(place.name); setShowAreaPicker(false);
+  };
+
+  const changeProductPage = (page) => {
+    if (!userLocation || loading || page < 1 || (page > productPage && !hasMore)) return;
+    fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, page, userLocation);
+  };
 
   // 3. Open Google Maps
   const saveActivity = (action, shopId, productId) => {
@@ -433,13 +522,12 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   };
 
   // 4. Products: Filter & Sort by Distance (Nearest First)
+  const resultsMatch = resultsKey === discoveryKey(userLocation, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory);
   const processedProducts = products
     .filter((p) => {
-      if (!p) return false;
+      if (!p || !resultsMatch) return false;
       const matchCat = activeCategory === 'all' || p.category === activeCategory;
-      const term = searchQuery.toLowerCase();
-      const matchSearch = (p.name || '').toLowerCase().includes(term) || (p.shop_name || '').toLowerCase().includes(term);
-      return matchCat && matchSearch;
+      return matchCat;
     })
     .map((p) => {
       const distKm = getItemDistanceKm(p.shop_lat, p.shop_lng, p.backendDistance);
@@ -450,11 +538,9 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   // 5. Shops: Filter & Sort by Distance (Nearest First)
   const processedShops = shops
     .filter((s) => {
-      if (!s) return false;
+      if (!s || !resultsMatch) return false;
       const matchCat = activeCategory === 'all' || s.category === activeCategory;
-      const term = searchQuery.toLowerCase();
-      const matchSearch = (s.name || '').toLowerCase().includes(term) || (s.address || '').toLowerCase().includes(term);
-      return matchCat && matchSearch;
+      return matchCat;
     })
     .map((s) => {
       const distKm = getItemDistanceKm(s.lat, s.lng, s.backendDistance);
@@ -462,11 +548,9 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
     })
     .sort((a, b) => a.calculatedDistKm - b.calculatedDistKm); // Shortest distance first
 
-  const productPageCount = Math.max(1, Math.ceil(processedProducts.length / PAGE_SIZE));
   const shopPageCount = Math.max(1, Math.ceil(processedShops.length / PAGE_SIZE));
-  const currentProductPage = Math.min(productPage, productPageCount);
   const currentShopPage = Math.min(shopPage, shopPageCount);
-  const visibleProducts = processedProducts.slice((currentProductPage - 1) * PAGE_SIZE, currentProductPage * PAGE_SIZE);
+  const visibleProducts = processedProducts;
   const visibleShops = processedShops.slice((currentShopPage - 1) * PAGE_SIZE, currentShopPage * PAGE_SIZE);
 
   return (
@@ -474,18 +558,41 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       <section className="nearby-reveal relative mb-6 overflow-hidden rounded-[2rem] bg-slate-950 px-6 py-8 text-white shadow-2xl shadow-slate-900/20 sm:px-10 sm:py-12">
         <div className="nearby-hero-orb absolute -right-20 -top-24 h-64 w-64 rounded-full bg-emerald-400/25 blur-3xl" />
         <div className="nearby-hero-orb nearby-hero-orb-delayed absolute -bottom-28 left-1/3 h-52 w-52 rounded-full bg-cyan-400/15 blur-3xl" />
-        <div className="absolute right-4 top-4 z-10 sm:right-6 sm:top-6">
-          <div className="inline-flex max-w-[210px] items-center gap-2 rounded-full border border-white/15 bg-slate-950/35 py-1.5 pl-2 pr-1.5 text-xs shadow-lg backdrop-blur-md">
-            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${userLocation ? 'bg-emerald-400 text-emerald-950' : 'bg-amber-300 text-amber-950'}`}><MapPin className="h-3.5 w-3.5" /></span>
-            <span className="truncate font-semibold text-white">{gettingLocation ? 'Finding location…' : userLocation ? placeName : locationError || 'Location unavailable'}</span>
-            <button onClick={getUserLocation} disabled={gettingLocation} title="Refresh location" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white hover:text-slate-900 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${gettingLocation ? 'animate-spin' : ''}`} /></button>
+        <div className="relative grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:gap-12">
+          <div className="max-w-3xl">
+            <span className="inline-flex rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-200">Nearbuy discovery</span>
+            <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-5xl">Find it nearby.<br /><span className="text-emerald-300">Buy it today.</span></h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Search real products from local shops, check availability, and visit with confidence.</p>
+            <div className="mt-5 flex flex-wrap gap-2 text-xs font-semibold text-slate-200"><span className="rounded-full bg-white/10 px-3 py-1.5">Live availability</span><span className="rounded-full bg-white/10 px-3 py-1.5">Local prices</span><span className="rounded-full bg-white/10 px-3 py-1.5">Direct shop contact</span></div>
           </div>
-        </div>
-        <div className="relative max-w-3xl">
-          <span className="inline-flex rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-200">Nearbuy discovery</span>
-          <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-5xl">Find it nearby.<br /><span className="text-emerald-300">Buy it today.</span></h1>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Search real products from local shops, check availability, and visit with confidence.</p>
-          <div className="mt-5 flex flex-wrap gap-2 text-xs font-semibold text-slate-200"><span className="rounded-full bg-white/10 px-3 py-1.5">Live availability</span><span className="rounded-full bg-white/10 px-3 py-1.5">Local prices</span><span className="rounded-full bg-white/10 px-3 py-1.5">Direct shop contact</span></div>
+
+          <div className="rounded-2xl border border-white/15 bg-white/[0.07] p-3 shadow-xl backdrop-blur-md sm:p-4">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${userLocation ? 'bg-emerald-400 text-emerald-950' : 'bg-amber-300 text-amber-950'}`}><MapPin className="h-4 w-4" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Your location</p>
+                <p title={userLocation ? placeName : locationError || 'Location unavailable'} className="truncate text-sm font-bold text-white">{gettingLocation ? 'Finding location…' : userLocation ? placeName : 'Location unavailable'}</p>
+              </div>
+              <button type="button" onClick={getUserLocation} disabled={gettingLocation} title="Use current GPS location" aria-label="Use current GPS location" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white transition hover:bg-white hover:text-slate-900 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${gettingLocation ? 'animate-spin' : ''}`} /></button>
+            </div>
+
+            {locationError && !userLocation && <p role="alert" className="mt-2 rounded-lg bg-amber-300/10 px-2.5 py-2 text-[11px] leading-4 text-amber-100">{locationError}</p>}
+
+            <button type="button" onClick={() => setShowAreaPicker((value) => !value)} aria-expanded={showAreaPicker} className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2 text-xs font-bold text-emerald-200 transition hover:bg-white/10">
+              <span className="flex items-center gap-2"><Search className="h-3.5 w-3.5" />Choose area / pincode</span>
+              <ChevronRight className={`h-3.5 w-3.5 transition ${showAreaPicker ? 'rotate-90' : ''}`} />
+            </button>
+
+            {showAreaPicker && <div className="mt-2">
+              <form onSubmit={findArea} className="flex gap-2">
+                <input required minLength={2} maxLength={120} value={areaQuery} onChange={(event) => setAreaQuery(event.target.value)} aria-label="Area or pincode in India" placeholder="Area or pincode" className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white px-3 py-2 text-xs font-medium text-slate-800 outline-none placeholder:text-slate-400" />
+                <button type="submit" disabled={findingArea || areaQuery.trim().length < 2} className="shrink-0 rounded-lg bg-emerald-400 px-3 py-2 text-xs font-bold text-emerald-950 disabled:opacity-50">{findingArea ? 'Finding…' : 'Find'}</button>
+              </form>
+              {areaError && <p role="alert" className="mt-2 text-xs text-rose-200">{areaError}</p>}
+              <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">{areaPlaces.map((place) => <button type="button" key={place.id} onClick={() => chooseArea(place)} className="block w-full rounded-lg bg-white/10 px-3 py-2 text-left text-xs leading-4 text-slate-100 transition hover:bg-emerald-400/20">{place.name}</button>)}</div>
+              <p className="mt-2 text-[10px] text-slate-500">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-slate-300">OpenStreetMap contributors</a></p>
+            </div>}
+          </div>
         </div>
       </section>
 
@@ -578,12 +685,16 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       </div>
       </div>
 
-      {/* 4. Loading State */}
-      {loading ? (
-        <div className="text-center py-16">
-          <p className="text-sm font-medium text-slate-500 animate-pulse">Finding nearby products…</p>
-        </div>
-      ) : (
+      {resultsMatch && (cachedResults || (loading && products.length > 0)) && <p role="status" className="mb-4 text-sm font-semibold text-emerald-700">{cachedResults ? (loading ? 'Showing saved results. Updating prices and stock…' : 'Showing saved results. Prices and stock may have changed.') : 'Updating products…'}</p>}
+      {searchError && <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <p>{searchError}{resultsMatch && products.length > 0 ? ' Showing previously loaded results.' : ''}</p>
+        <button className="mt-2 font-bold underline" onClick={() => userLocation && fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)}>Retry search</button>
+      </div>}
+      {processedProducts.length === 0 && ((!searchError && userLocation && (loading || !resultsMatch)) || gettingLocation) ? (
+        <ProductSkeleton />
+      ) : !userLocation ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">Choose an area or allow GPS to discover nearby products.</div>
+      ) : searchError && processedProducts.length === 0 ? null : (
         <div className="space-y-10">
           
           {/* ================= SECTION 1: PRODUCTS NEARBY ================= */}
@@ -594,7 +705,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                 Nearby Products
               </h2>
               <span className="text-xs font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full">
-                {processedProducts.length} items
+                {processedProducts.length} items loaded
               </span>
             </div>
 
@@ -700,7 +811,13 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                 })}
               </div>
             )}
-            <Pagination page={currentProductPage} pageCount={productPageCount} setPage={setProductPage} itemName="products" />
+            {processedProducts.length > 0 && <div className="mt-5 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+              <span className="font-medium text-slate-500">Page {productPage} · {PAGE_SIZE} products per page</span>
+              <div className="flex gap-2">
+                <button onClick={() => changeProductPage(productPage - 1)} disabled={loading || productPage === 1} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /> Previous</button>
+                <button onClick={() => changeProductPage(productPage + 1)} disabled={loading || !hasMore} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Next <ChevronRight className="h-3.5 w-3.5" /></button>
+              </div>
+            </div>}
           </section>
 
           {/* ================= SECTION 2: SHOPS NEARBY ================= */}
@@ -711,7 +828,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                 Nearby Shops
               </h2>
               <span className="text-xs font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full">
-                {processedShops.length} shops
+                {processedShops.length} shops shown
               </span>
             </div>
 

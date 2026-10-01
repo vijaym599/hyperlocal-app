@@ -3,13 +3,15 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
+const { refreshShopStatus } = require('./shopSchedule');
+const { categorySql, categoryIds } = require('./searchCategory');
+const { geocode, searchPlaces } = require('./geocoder');
 const authenticate = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const allowedOrigins = String(process.env.CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean);
 const rateLimitStore = new Map();
-const reverseGeocodeCache = new Map();
 
 app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : (process.env.NODE_ENV === 'production' ? false : true),
@@ -101,31 +103,31 @@ const requireCustomer = async (req, res, next) => {
 app.get('/api/location/reverse', rateLimit(30, 60 * 60 * 1000), async (req, res) => {
   const latitude = Number(req.query.lat);
   const longitude = Number(req.query.lng);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  if (req.query.lat == null || req.query.lng == null || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
     return res.status(400).json({ error: 'Valid latitude and longitude are required.' });
   }
 
-  const cacheKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
-  const cached = reverseGeocodeCache.get(cacheKey);
-  if (cached && Date.now() - cached.createdAt < 30 * 60 * 1000) return res.json(cached.value);
-
   try {
-    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${latitude}&lon=${longitude}`, {
-      headers: {
-        'User-Agent': process.env.GEOCODER_USER_AGENT || 'Nearbuy/1.0',
-        'Accept-Language': 'en'
-      }
-    });
-    if (!response.ok) throw new Error(`Geocoding provider returned ${response.status}`);
-    const data = await response.json();
+    const data = await geocode(new URLSearchParams({ format: 'jsonv2', zoom: '14', addressdetails: '1', lat: String(latitude), lon: String(longitude) }));
     const address = data.address || {};
     const placeName = [address.suburb || address.neighbourhood || address.village, address.city || address.town || address.county || address.state_district].filter(Boolean).join(', ') || data.display_name?.split(',').slice(0, 2).join(', ') || 'Current location';
     const value = { place_name: placeName };
-    reverseGeocodeCache.set(cacheKey, { value, createdAt: Date.now() });
     return res.json(value);
   } catch (error) {
     console.error('Reverse geocoding error:', error.message);
     return res.status(502).json({ error: 'Unable to identify the current place.' });
+  }
+});
+
+app.get('/api/location/search', rateLimit(20, 60 * 60 * 1000), async (req, res) => {
+  const query = String(req.query.query || '').trim();
+  if (query.length < 2 || query.length > 120) return res.status(400).json({ error: 'Enter an area or pincode between 2 and 120 characters.' });
+  try {
+    const places = await searchPlaces(query);
+    return res.json({ places });
+  } catch (error) {
+    console.error('Area lookup failed:', error.message);
+    return res.status(502).json({ error: 'Unable to find this area. Please try again.' });
   }
 });
 
@@ -469,7 +471,7 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
     if (existingCount + incoming.length > limit) return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
     const values = incoming.map((item, index) => {
       const name = String(item.name || '').trim(); const price = Number(item.price);
-      if (!name || !Number.isFinite(price) || price < 0) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
+      if (!name || item.price == null || String(item.price).trim() === '' || !Number.isFinite(price) || price < 0) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
       const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw new Error(`Row ${index + 1} has an invalid availability status.`);
       if (hasOversizedImagePayload(item.image_url)) throw new Error(`Row ${index + 1} has an image that is too large.`);
       const brand = String(item.brand || '').trim(); const image = String(item.image_url || '').trim() || productFallbackImage(name, brand);
@@ -521,8 +523,8 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
         name.trim(),
         category,
         address?.trim() || null,
-        latitude === '' || latitude === undefined ? null : Number(latitude),
-        longitude === '' || longitude === undefined ? null : Number(longitude),
+        latitude == null || latitude === '' ? null : Number(latitude),
+        longitude == null || longitude === '' ? null : Number(longitude),
         google_map_link?.trim() || '',
         phone?.trim() || null,
         whatsapp_number?.trim() || null,
@@ -876,8 +878,14 @@ app.get('/api/search/products', async (req, res) => {
   const longitude = Number(lng);
   const radiusValue = String(req.query.radius || '').trim();
   const requestedRadius = radiusValue ? Number(radiusValue) : null;
+  const page = Number(req.query.page || 1);
+  const pageSize = Number(req.query.limit || 10);
+  const category = String(req.query.category || 'all');
+  if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 48 || !categoryIds.has(category)) {
+    return res.status(400).json({ error: 'Invalid page, limit, or category.' });
+  }
 
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  if (!String(lat ?? "").trim() || !String(lng ?? "").trim() || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
     return res.status(400).json({ error: 'Valid latitude and longitude are required.' });
   }
   if (requestedRadius !== null && (!Number.isFinite(requestedRadius) || requestedRadius <= 0)) {
@@ -917,6 +925,7 @@ app.get('/api/search/products', async (req, res) => {
             p.name ILIKE $3 OR p.brand ILIKE $3 OR p.description ILIKE $3 OR s.name ILIKE $3
           )
           AND ($5 = 'all' OR p.availability_status = $5)
+          AND ($6 = 'all' OR (${categorySql}) = $6)
         )
         SELECT *
         FROM ranked_products
@@ -928,15 +937,19 @@ app.get('/api/search/products', async (req, res) => {
             ELSE 2
           END,
           distance_km ASC,
-          price ASC
-        LIMIT 500;
+          price ASC, id ASC
+        LIMIT $7 OFFSET $8;
       `,
-      [latitude, longitude, searchTerm, radiusKm, availability]
+      [latitude, longitude, searchTerm, radiusKm, availability, category, pageSize + 1, (page - 1) * pageSize]
     );
 
     return res.json({
-      results: result.rows,
-      total_results: result.rows.length,
+      results: result.rows.slice(0, pageSize),
+      total_results: Math.min(result.rows.length, pageSize),
+      page,
+      page_size: pageSize,
+      has_more: result.rows.length > pageSize,
+      next_page: result.rows.length > pageSize ? page + 1 : null,
       radius_km: radiusKm,
       availability_filter: availability
     });
@@ -993,9 +1006,9 @@ app.get('/api/search/suggestions', async (req, res) => {
 app.post('/api/product-requests', rateLimit(10, 60 * 60 * 1000), async (req, res) => {
   const { requested_product, customer_phone, latitude, longitude, radius_km } = req.body;
   const productName = String(requested_product || '').trim();
-  const parsedLatitude = latitude === undefined ? null : Number(latitude);
-  const parsedLongitude = longitude === undefined ? null : Number(longitude);
-  const parsedRadius = radius_km === undefined ? null : Number(radius_km);
+  const parsedLatitude = latitude == null || latitude === '' ? null : Number(latitude);
+  const parsedLongitude = longitude == null || longitude === '' ? null : Number(longitude);
+  const parsedRadius = radius_km == null || radius_km === '' ? null : Number(radius_km);
 
   if (productName.length < 2 || productName.length > 255) {
     return res.status(400).json({ error: 'Please enter a product name between 2 and 255 characters.' });
@@ -1226,6 +1239,37 @@ app.use((req, res) => {
   res.status(404).json({ error: `API Route Not Found: [${req.method}] ${req.originalUrl}` });
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend Server running with PostgreSQL on http://localhost:${PORT}`);
-});
+const startServer = async () => {
+  try {
+    await pool.initDb();
+    await refreshShopStatus(pool);
+    let refreshing = false;
+    const timer = setInterval(async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try { await refreshShopStatus(pool); }
+      catch (error) { console.error('Shop schedule refresh failed:', error.message); }
+      finally { refreshing = false; }
+    }, 15000);
+    timer.unref();
+    const server = app.listen(PORT, () => {
+      console.log('Backend Server running with PostgreSQL on port ' + PORT);
+    });
+    server.on('close', () => clearInterval(timer));
+    server.on('error', async (error) => {
+      clearInterval(timer);
+      console.error('Server startup failed:', error.message);
+      await pool.end();
+      process.exitCode = 1;
+    });
+    return server;
+  } catch (error) {
+    console.error('Server startup failed:', error.message);
+    await pool.end();
+    process.exitCode = 1;
+    return null;
+  }
+};
+
+if (require.main === module) void startServer();
+module.exports = { app, startServer };
