@@ -12,6 +12,14 @@ test('first subscription rewards are 20 percent in integer paise for all plans',
     assert.equal(calls[1].values[6], rewards[plan]);
   }
 });
+test('six-month Basic purchase rewards use the full purchase amount', async () => {
+  const calls = [];
+  const client = { query: async (sql, values) => { calls.push({ sql, values }); return { rows: [{ id: 1, phone: '+919876543210', user_type: 'customer', is_admin: false }] }; } };
+  await attachReferral(client, 'NB' + 'a'.repeat(24), { id: 10, name: 'Shop', user_id: 2, subscription_plan: 'basic', subscription_amount_paise: 12000 }, '+919876543211');
+  assert.equal(calls[1].values[5], 12000);
+  assert.equal(calls[1].values[6], 2400);
+});
+
 test('invalid, ineligible and self referral codes cannot create rewards', async () => {
   const shop = { id: 10, name: 'Shop', user_id: 2, subscription_plan: 'pro' };
   const customer = { id: 1, phone: '+919876543210', user_type: 'customer', is_admin: false };

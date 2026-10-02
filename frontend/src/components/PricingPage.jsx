@@ -3,7 +3,7 @@ import { ArrowLeft, BarChart3, Check, Eye, MapPin, MessageCircle, PhoneCall, Shi
 const plans = [
   {
     id: 'basic', name: 'Basic', price: 20, products: '10 products', verified: false, insights: false,
-    summary: 'For shops starting their online catalog.',
+    summary: 'Minimum 6 months. ₹120 upfront (₹20/month). Upgrade anytime.',
     benefits: ['Your own shop page', 'Add and update up to 10 products', 'Customers can call or get directions']
   },
   {

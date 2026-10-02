@@ -75,6 +75,11 @@ const initDb = async () => {
     `);
 
     await pool.query('ALTER TABLE shops ADD COLUMN IF NOT EXISTS city VARCHAR(80)');
+    await pool.query(`ALTER TABLE shops
+      ADD COLUMN IF NOT EXISTS subscription_months INTEGER,
+      ADD COLUMN IF NOT EXISTS subscription_amount_paise INTEGER,
+      ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS subscription_ends_at TIMESTAMPTZ;`);
 
     // Customer demand is retained even when no nearby shop currently lists a product.
     await pool.query(`

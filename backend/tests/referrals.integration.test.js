@@ -24,7 +24,9 @@ test('PostgreSQL referral registration, admin review and concurrent redemption w
         category TEXT,address TEXT,latitude DOUBLE PRECISION,longitude DOUBLE PRECISION,google_map_link TEXT,
         phone TEXT,whatsapp_number TEXT,opening_hours TEXT,opening_time TIME,closing_time TIME,
         subscription_plan TEXT,payment_id TEXT,is_verified BOOLEAN DEFAULT FALSE,verified_at TIMESTAMP,
-        subscription_status TEXT DEFAULT 'active',subscription_cancelled_at TIMESTAMP,updated_at TIMESTAMP);
+        subscription_status TEXT DEFAULT 'active',subscription_cancelled_at TIMESTAMP,updated_at TIMESTAMP,
+        city VARCHAR(80),subscription_months INTEGER,subscription_amount_paise INTEGER,
+        subscription_started_at TIMESTAMPTZ,subscription_ends_at TIMESTAMPTZ);
       INSERT INTO users(owner_name,phone,password,user_type,is_admin) VALUES
         ('Referrer','+919000000001','test','customer',FALSE),
         ('Admin','+919000000002','test','customer',TRUE),

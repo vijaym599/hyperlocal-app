@@ -63,7 +63,7 @@ async function attachReferral(client, code, shop, ownerPhone) {
   const referrer = rows[0];
   if (!referrer || referrer.user_type !== 'customer' || referrer.is_admin || !validPhone(referrer.phone)) throw fail(400, 'This referral code is not eligible.');
   if (referrer.id === shop.user_id || referrer.phone.replace(/^\+/, '') === ownerPhone.replace(/^\+/, '')) throw fail(400, 'You cannot refer your own shop.');
-  const price = PLAN_PRICES_PAISE[shop.subscription_plan];
+  const price = shop.subscription_amount_paise || PLAN_PRICES_PAISE[shop.subscription_plan];
   if (!price) throw fail(400, 'This subscription plan does not earn referral rewards.');
   await client.query(`INSERT INTO referral_earnings
     (user_id,shop_id,referred_shop_id,shop_name,owner_phone,subscription_plan,subscription_price_paise,reward_paise)

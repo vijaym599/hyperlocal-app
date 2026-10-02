@@ -13,6 +13,7 @@ const { normalizePhone, isValidPhone, consumeVerificationToken, mountPhoneVerifi
 const { mountAnalytics } = require('./analytics');
 const { mountAdminManagement } = require('./adminManagement');
 const { mountAccount } = require('./account');
+const { subscriptionTerms } = require('./subscriptionTerms');
 
 const app = express();
 const authenticate = withAccountValidation(pool);
@@ -250,11 +251,12 @@ app.post('/api/auth/register-shop', async (req, res) => {
     );
 
     const newUser = userResult.rows[0];
+    const terms = subscriptionTerms(selected_plan);
 
     const shopResult = await client.query(
       `INSERT INTO shops
-        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at, city)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END, $16)
+        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at, city, subscription_months, subscription_amount_paise, subscription_started_at, subscription_ends_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END, $16, $17, $18, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + make_interval(months => $17::int))
        RETURNING *`,
       [
         newUser.id,
@@ -272,7 +274,9 @@ app.post('/api/auth/register-shop', async (req, res) => {
         selected_plan || 'free',
         payment_id || null,
         VERIFIED_SUBSCRIPTION_PLANS.has(selected_plan),
-        city?.trim() || null
+        city?.trim() || null,
+        terms.months,
+        terms.amountPaise
       ]
     );
 
@@ -453,7 +457,11 @@ app.patch('/api/shops/:shopId/subscription', authenticate, async (req, res) => {
     } else {
       if (!Object.hasOwn(SUBSCRIPTION_LIMITS, plan) || !payment_id) return res.status(400).json({ error: 'Choose a valid paid plan and complete payment.' });
       const verified = VERIFIED_SUBSCRIPTION_PLANS.has(plan);
-      result = await pool.query(`UPDATE shops SET subscription_plan = $1, payment_id = $2, subscription_status = 'active', subscription_cancelled_at = NULL, is_verified = $3, verified_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`, [plan, payment_id, verified, shopId]);
+      const terms = subscriptionTerms(plan);
+      result = await pool.query(`UPDATE shops SET subscription_plan = $1, payment_id = $2, subscription_status = 'active', subscription_cancelled_at = NULL, is_verified = $3, verified_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,
+        subscription_months = $5, subscription_amount_paise = $6, subscription_started_at = CURRENT_TIMESTAMP,
+        subscription_ends_at = (CASE WHEN subscription_plan = $1 THEN GREATEST(COALESCE(subscription_ends_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END) + make_interval(months => $5::int),
+        updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`, [plan, payment_id, verified, shopId, terms.months, terms.amountPaise]);
     }
     return res.json({ message: action === 'cancel' ? 'Subscription renewal cancelled.' : 'Subscription updated.', shop: result.rows[0] });
   } catch (err) { return res.status(500).json({ error: 'Unable to update subscription.' }); }
