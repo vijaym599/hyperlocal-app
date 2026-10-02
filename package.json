@@ -4,6 +4,15 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "start": "npm --prefix backend start",
+    "smoke": "node scripts/smoke.mjs",
+    "db:inspect": "node scripts/database-maintenance.js inspect",
+    "db:reset": "node scripts/database-maintenance.js backup-reset",
+    "db:verify": "node scripts/verify-database-schema.js",
+    "admin:promote": "node scripts/promote-admin.js",
+    "admin:bootstrap": "node scripts/bootstrap-admin.js",
     "test": "node --test frontend/tests/*.test.mjs backend/tests/*.test.js"
   },
   "keywords": [],

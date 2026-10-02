@@ -6,12 +6,38 @@ const pool = require('./db');
 const { refreshShopStatus } = require('./shopSchedule');
 const { categorySql, categoryIds } = require('./searchCategory');
 const { geocode, searchPlaces } = require('./geocoder');
-const authenticate = require('./middleware/auth');
+const { withAccountValidation } = require('./middleware/auth');
+const { validateProduction, trustProxy } = require('./production');
+const { attachReferral, mountReferrals } = require('./referrals');
+const { normalizePhone, isValidPhone, consumeVerificationToken, mountPhoneVerification } = require('./phoneVerification');
+const { mountAnalytics } = require('./analytics');
+const { mountAdminManagement } = require('./adminManagement');
+const { mountAccount } = require('./account');
 
 const app = express();
+const authenticate = withAccountValidation(pool);
 const PORT = process.env.PORT || 5000;
 const allowedOrigins = String(process.env.CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean);
 const rateLimitStore = new Map();
+app.disable('x-powered-by');
+app.set('trust proxy', trustProxy(process.env.TRUST_PROXY));
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('X-Frame-Options', 'DENY');
+  if (process.env.NODE_ENV === 'production') res.set('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+
+app.get('/api/health', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok' });
+  } catch {
+    res.status(503).json({ status: 'unavailable' });
+  }
+});
 
 app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : (process.env.NODE_ENV === 'production' ? false : true),
@@ -19,8 +45,8 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 
-const rateLimit = (limit, windowMs) => (req, res, next) => {
-  const key = `${req.ip}:${req.baseUrl}`;
+const rateLimit = (limit, windowMs, scope = '') => (req, res, next) => {
+  const key = `${req.ip}:${scope || req.baseUrl}`;
   const now = Date.now();
   const entry = rateLimitStore.get(key);
   if (!entry || now >= entry.resetAt) {
@@ -33,6 +59,18 @@ const rateLimit = (limit, windowMs) => (req, res, next) => {
 };
 
 app.use('/api/auth', rateLimit(20, 15 * 60 * 1000));
+const rateLimitCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore) if (entry.resetAt <= now) rateLimitStore.delete(key);
+}, 60000);
+rateLimitCleanup.unref();
+
+// Client-supplied payment references are a local demo, never payment proof.
+const requireDemoBilling = (req, res, next) => process.env.NODE_ENV === 'production'
+  ? res.status(503).json({ error: 'Shop registration and billing are temporarily unavailable until verified payments are enabled.' })
+  : next();
+app.post('/api/auth/register-shop', requireDemoBilling);
+app.patch('/api/shops/:shopId/subscription', authenticate, requireDemoBilling);
 
 const SUBSCRIPTION_LIMITS = {
   basic: 10,
@@ -45,8 +83,6 @@ const INSIGHTS_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const AVAILABILITY_STATUSES = new Set(['available', 'low_stock', 'out_of_stock']);
 const productFallbackImage = (name, brand = '') => `https://loremflickr.com/640/480/${encodeURIComponent(`${brand || ''} ${name || 'local product'}`.trim())}`;
-const normalizePhone = (value) => String(value || '').trim().replace(/[\s().-]/g, '');
-const isValidPhone = (phone) => /^\+?[1-9]\d{7,14}$/.test(phone);
 const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const hasOversizedImagePayload = (value) => typeof value === 'string' && value.startsWith('data:image/') && value.length > 1_700_000;
 const isValidOfferDate = (value) => {
@@ -64,7 +100,7 @@ const createToken = (user) => {
   }
 
   return jwt.sign(
-    { userId: user.id, phone: user.phone, userType: user.user_type || 'customer', isAdmin: Boolean(user.is_admin) },
+    { userId: user.id, phone: user.phone, userType: user.user_type || 'customer', isAdmin: Boolean(user.is_admin), authVersion: Number(user.auth_version || 1) },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -99,6 +135,11 @@ const requireCustomer = async (req, res, next) => {
     return res.status(500).json({ error: 'Unable to verify account access.' });
   }
 };
+
+mountPhoneVerification(app, pool, rateLimit);
+mountAnalytics(app, pool, authenticate, rateLimit);
+mountAdminManagement(app, pool, authenticate);
+mountAccount(app, pool, authenticate, rateLimit);
 
 app.get('/api/location/reverse', rateLimit(30, 60 * 60 * 1000), async (req, res) => {
   const latitude = Number(req.query.lat);
@@ -185,6 +226,8 @@ app.post('/api/auth/register-shop', async (req, res) => {
     client = await pool.connect();
     await client.query('BEGIN');
 
+    await consumeVerificationToken(client, req.body.phone_verification_token, cleanPhone);
+
     const existingUser = await client.query(
       'SELECT id FROM users WHERE phone = $1 OR ($2::text IS NOT NULL AND email = $2)',
       [cleanPhone, cleanEmail]
@@ -196,9 +239,9 @@ app.post('/api/auth/register-shop', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const userResult = await client.query(
-      `INSERT INTO users (owner_name, phone, email, password, user_type)
-       VALUES ($1, $2, $3, $4, 'shop_owner')
-       RETURNING id, phone, email, owner_name, user_type, is_admin`,
+      `INSERT INTO users (owner_name, phone, email, password, user_type, phone_verified, phone_verified_at)
+       VALUES ($1, $2, $3, $4, 'shop_owner', TRUE, CURRENT_TIMESTAMP)
+       RETURNING id, phone, email, owner_name, user_type, is_admin, phone_verified`,
       [owner_name?.trim() || '', cleanPhone, cleanEmail, passwordHash]
     );
 
@@ -229,6 +272,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
     );
 
     const newShop = shopResult.rows[0];
+    await attachReferral(client, req.body.referral_code, newShop, cleanPhone);
     await client.query('COMMIT');
 
     return res.status(201).json({
@@ -241,7 +285,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
     console.error("Register Error in Backend:", err.message);
-    return res.status(500).json({ error: 'Database/Server Error: ' + err.message });
+    return res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to create your shop account.' });
   } finally {
     client?.release();
   }
@@ -249,6 +293,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
 
 // Customer accounts are independent from shop-owner accounts.
 const registerCustomer = async (req, res) => {
+  let client;
   try {
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'Authentication is not configured on the server.' });
     const name = String(req.body?.name || '').trim();
@@ -257,18 +302,28 @@ const registerCustomer = async (req, res) => {
     const password = String(req.body?.password || '');
     if (!name || !isValidPhone(phone) || password.length < 8) return res.status(400).json({ error: 'Name, valid phone number, and a password of at least 8 characters are required.' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
-    const existing = await pool.query('SELECT id FROM users WHERE phone = $1 OR ($2::text IS NOT NULL AND email = $2)', [phone, email]);
-    if (existing.rows.length) return res.status(409).json({ error: 'This phone number or email is already registered. Please sign in.' });
-    const result = await pool.query(
-      `INSERT INTO users (owner_name, phone, email, password, user_type) VALUES ($1, $2, $3, $4, 'customer')
-       RETURNING id, owner_name, phone, email, user_type, is_admin`,
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await consumeVerificationToken(client, req.body?.phone_verification_token, phone);
+    const existing = await client.query('SELECT id FROM users WHERE phone = $1 OR ($2::text IS NOT NULL AND email = $2)', [phone, email]);
+    if (existing.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This phone number or email is already registered. Please sign in.' });
+    }
+    const result = await client.query(
+      `INSERT INTO users (owner_name, phone, email, password, user_type, phone_verified, phone_verified_at) VALUES ($1, $2, $3, $4, 'customer', TRUE, CURRENT_TIMESTAMP)
+       RETURNING id, owner_name, phone, email, user_type, is_admin, phone_verified`,
       [name, phone, email, await bcrypt.hash(password, 12)]
     );
     const user = result.rows[0];
+    await client.query('COMMIT');
     return res.status(201).json({ message: 'Customer account created.', token: createToken(user), user, shop: null });
   } catch (err) {
-    console.error('Customer registration error:', err);
-    return res.status(500).json({ error: 'Unable to create your account.' });
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (!err.status) console.error('Customer registration error:', err);
+    return res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to create your account.' });
+  } finally {
+    client?.release();
   }
 };
 
@@ -1016,6 +1071,8 @@ app.post('/api/product-requests', rateLimit(10, 60 * 60 * 1000), async (req, res
   if (
     (parsedLatitude !== null && !Number.isFinite(parsedLatitude)) ||
     (parsedLongitude !== null && !Number.isFinite(parsedLongitude)) ||
+    ((parsedLatitude === null) !== (parsedLongitude === null)) ||
+    (parsedLatitude !== null && (Math.abs(parsedLatitude) > 90 || Math.abs(parsedLongitude) > 180)) ||
     (parsedRadius !== null && (!Number.isFinite(parsedRadius) || parsedRadius <= 0))
   ) {
     return res.status(400).json({ error: 'Invalid request location details.' });
@@ -1235,12 +1292,16 @@ app.get('/api/shops/nearby-products', handleExploreOrNearby);
 // ==========================================
 // 404 HANDLER
 // ==========================================
+mountReferrals(app, pool, authenticate);
+require('./seo').mountSeo(app, pool);
+
 app.use((req, res) => {
   res.status(404).json({ error: `API Route Not Found: [${req.method}] ${req.originalUrl}` });
 });
 
 const startServer = async () => {
   try {
+    validateProduction();
     await pool.initDb();
     await refreshShopStatus(pool);
     let refreshing = false;
@@ -1271,5 +1332,21 @@ const startServer = async () => {
   }
 };
 
-if (require.main === module) void startServer();
+if (require.main === module) void startServer().then((server) => {
+  if (!server) return;
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    const timeout = setTimeout(() => process.exit(1), 25000);
+    timeout.unref();
+    server.close(async () => {
+      try { await pool.end(); }
+      catch (error) { console.error('Database shutdown failed:', error.message); process.exitCode = 1; }
+      finally { clearTimeout(timeout); }
+    });
+  };
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
+});
 module.exports = { app, startServer };

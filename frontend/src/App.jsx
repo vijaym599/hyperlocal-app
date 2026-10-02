@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getRole, homeTab, resolveTab } from './session.mjs';
 import Navbar from './components/Navbar';
 import NearbySearch from './components/NearbySearch';
 import MyShop from './components/MyShop';
 import AboutContent from './components/AboutContent';
-import DemandDashboard from './components/DemandDashboard';
+import AdminDashboard from './components/AdminDashboard';
 import Footer from './components/Footer';
 import LegalContent from './components/LegalContent';
 import ReportIssue from './components/ReportIssue';
@@ -13,10 +13,12 @@ import UserActivity from './components/UserActivity';
 import ShopPortfolio from './components/ShopPortfolio';
 import PricingPage from './components/PricingPage';
 import Offers from './components/Offers';
+import { referralFromSearch } from './referrals.mjs';
+import { trackPageVisit } from './analytics.mjs';
 
 export default function App() {
   // Resolve the requested page against the current account's access.
-  const [requestedTab, setActiveTab] = useState(null);
+  const [requestedTab, setActiveTab] = useState(() => referralFromSearch(window.location.search) ? 'my-shop' : null);
   const [portfolioShop, setPortfolioShop] = useState(null);
   
   const [session, setSession] = useState(() => {
@@ -39,9 +41,14 @@ export default function App() {
     setSession(null);
     setActiveTab('explore');
   };
+  const handleSessionUpdate = (nextSession) => {
+    localStorage.setItem('hyperlocal-session', JSON.stringify(nextSession));
+    setSession(nextSession);
+  };
 
   const role = getRole(session);
   const activeTab = resolveTab(requestedTab || homeTab(session), session, portfolioShop);
+  useEffect(() => { if (role !== 'admin') trackPageVisit(activeTab); }, [activeTab, role]);
 
   return (
     <div className="min-h-screen bg-transparent font-sans text-slate-800 flex flex-col">
@@ -65,7 +72,7 @@ export default function App() {
 
         {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={handleLoginSuccess} onChooseShop={() => setActiveTab('my-shop')} onBack={() => setActiveTab('explore')} />}
 
-        {activeTab === 'activity' && role === 'customer' && <UserActivity session={session} />}
+        {activeTab === 'activity' && role === 'customer' && <UserActivity session={session} onLogout={handleLogout} onSessionUpdate={handleSessionUpdate} />}
         
         {activeTab === 'my-shop' && (role === 'guest' || role === 'shop_owner') && (
           <MyShop 
@@ -84,7 +91,7 @@ export default function App() {
 
         {activeTab === 'report-issue' && <ReportIssue onBack={() => setActiveTab('explore')} />}
 
-        {activeTab === 'demand' && role === 'admin' && <DemandDashboard session={session} />}
+        {activeTab === 'demand' && role === 'admin' && <AdminDashboard session={session} />}
 
         {activeTab === 'pricing' && <PricingPage onBack={() => setActiveTab(role === 'shop_owner' ? 'my-shop' : 'explore')} onStart={() => setActiveTab('my-shop')} />}
       </main>

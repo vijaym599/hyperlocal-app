@@ -1,5 +1,9 @@
 # Nearbuy project guide
 
+Referral rewards and redemption were added after the original review. See [REFERRALS.md](REFERRALS.md) for the customer/admin flow, additive tables, one-time 20% calculation, payout statuses and gateway boundary. Customer activity now includes referral wallets; admin demand operations include referral verification and redemption review.
+
+New customer and shop-owner registration also requires WhatsApp OTP verification. See [PHONE_VERIFICATION.md](PHONE_VERIFICATION.md) for the one-time token model and provider configuration.
+
 Reviewed on 2026-10-01. This guide records the current source implementation and is a starting point for future changes. Live database contents, browser behavior, deployment, and third-party service availability were not verified.
 
 ## Product and architecture

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
+import { referralFromSearch } from '../referrals.mjs';
+import PhoneVerification from './PhoneVerification';
 
 const SUBSCRIPTION_PLANS = [
   { id: 'basic', name: 'Basic', price: 20, limit: 10, desc: 'Great for growing neighborhood stores · no shop insights' },
@@ -97,7 +99,7 @@ const fetchShopOffers = async (shopId, token) => {
 };
 
 const MyShop = ({ session, onLoginSuccess, onLogout }) => {
-  const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : 'choice');
+  const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : referralFromSearch(window.location.search) ? 'register_wizard' : 'choice');
   const [wizardStep, setWizardStep] = useState(1);
   const [selectedSubscriptionPlan, setSelectedSubscriptionPlan] = useState(null);
 
@@ -123,11 +125,13 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [editingOffer, setEditingOffer] = useState(null);
   const [offerMessage, setOfferMessage] = useState('');
   const [offersLoading, setOffersLoading] = useState(false);
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
 
   // REGISTRATION FORM WITH CATEGORY
   const [regForm, setRegForm] = useState({
     owner_name: '',
     account_phone: '',
+    referral_code: referralFromSearch(window.location.search),
     email: '',
     password: '',
     shop_name: '',
@@ -349,7 +353,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const payload = { 
         ...regForm, 
         selected_plan: planId,
-        payment_id: paymentId 
+        payment_id: paymentId,
+        phone_verification_token: phoneVerificationToken
       };
 
       const res = await fetch(`${API_BASE_URL}/api/auth/register-shop`, {
@@ -671,8 +676,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             {errorMsg && <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">{errorMsg}</div>}
 
             <input type="text" required placeholder="Owner Name *" value={regForm.owner_name} onChange={(e) => setRegForm({ ...regForm, owner_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="tel" inputMode="tel" autoComplete="tel" required placeholder="Account phone with country code, e.g. +919876543210 *" value={regForm.account_phone} onChange={(e) => setRegForm({ ...regForm, account_phone: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="tel" inputMode="tel" autoComplete="tel" required placeholder="Account phone with country code, e.g. +919876543210 *" value={regForm.account_phone} onChange={(e) => { setRegForm({ ...regForm, account_phone: e.target.value }); setPhoneVerificationToken(''); }} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <PhoneVerification key={regForm.account_phone} phone={regForm.account_phone} verified={Boolean(phoneVerificationToken)} onVerified={setPhoneVerificationToken} />
             <input type="email" autoComplete="email" placeholder="Email (optional)" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <label className="block text-xs font-semibold text-slate-600">Referral code (optional)<input type="text" maxLength={26} value={regForm.referral_code} onChange={(e) => setRegForm({ ...regForm, referral_code: e.target.value.toUpperCase().trim() })} placeholder="Code shared by the customer who invited you" className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-2.5 font-mono text-sm" /><span className="mt-1 block font-normal text-slate-400">They earn 20% of your first subscription after payment review. Your plan price stays the same.</span></label>
             <div className="relative"><input type={showRegisterPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} placeholder="Password (minimum 8 characters) *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowRegisterPassword(!showRegisterPassword)} aria-label={showRegisterPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showRegisterPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
             
             <input type="text" required placeholder="Shop Name *" value={regForm.shop_name} onChange={(e) => setRegForm({ ...regForm, shop_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
@@ -709,7 +716,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               </div>
             </div>
             
-            <button type="submit" className="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer">
+            <button type="submit" disabled={!phoneVerificationToken} className="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-40">
               Next Step (Choose Subscription)
             </button>
           </form>

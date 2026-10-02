@@ -1,13 +1,9 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
-});
+const { databaseConfig } = require('./production');
+const pool = new Pool(databaseConfig());
+pool.on('error', (error) => console.error('Idle database connection error:', error.message));
 
 // Database Tables Automatic Creation Logic
 const initDb = async () => {
@@ -24,6 +20,8 @@ const initDb = async () => {
         phone_verified_at TIMESTAMP,
         user_type VARCHAR(20) NOT NULL DEFAULT 'customer',
         is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+        auth_version INTEGER NOT NULL DEFAULT 1,
+        password_changed_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -148,7 +146,9 @@ const initDb = async () => {
         ADD COLUMN IF NOT EXISTS user_type VARCHAR(20) NOT NULL DEFAULT 'customer',
         ADD COLUMN IF NOT EXISTS phone VARCHAR(20),
         ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
-        ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP;
+        ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
 
       ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique_idx
@@ -213,6 +213,10 @@ const initDb = async () => {
       END $$;
     `);
 
+    await require('./referrals').initReferrals(pool);
+    await require('./phoneVerification').initPhoneVerification(pool);
+    await require('./analytics').initAnalytics(pool);
+    await require('./schemaOptimization').optimizeSchema(pool);
     console.log('PostgreSQL Tables Verified & Ready!');
   } catch (err) {
     console.error('Table Creation Error:', err.message);

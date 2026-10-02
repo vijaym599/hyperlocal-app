@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft, Eye, EyeOff, Loader2, LogIn, UserPlus } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import PhoneVerification from './PhoneVerification';
 
 export default function CustomerAuth({ onLoginSuccess, onChooseShop, onBack }) {
   const [mode, setMode] = useState('login');
@@ -9,12 +10,13 @@ export default function CustomerAuth({ onLoginSuccess, onChooseShop, onBack }) {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [resetNotice, setResetNotice] = useState('');
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
 
   const submit = async (event) => {
     event.preventDefault(); setError(''); setLoading(true);
     try {
       const endpoint = mode === 'customer-register' ? 'register-customer' : 'login';
-      const payload = mode === 'customer-register' ? form : { phone: form.phone, password: form.password };
+      const payload = mode === 'customer-register' ? { ...form, phone_verification_token: phoneVerificationToken } : { phone: form.phone, password: form.password };
       const response = await fetch(`${API_BASE_URL}/api/auth/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to sign in.');
@@ -31,12 +33,13 @@ export default function CustomerAuth({ onLoginSuccess, onChooseShop, onBack }) {
     {mode === 'register' && <div className="mt-5 grid grid-cols-2 gap-3"><button type="button" className="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-3 text-left" onClick={() => setMode('customer-register')}><span className="block text-sm font-bold text-emerald-800">Customer</span><span className="mt-1 block text-xs text-slate-500">Discover, review and save activity</span></button><button type="button" className="rounded-xl border border-slate-200 p-3 text-left hover:border-emerald-400" onClick={onChooseShop}><span className="block text-sm font-bold text-slate-800">Shop owner</span><span className="mt-1 block text-xs text-slate-500">List products with a subscription</span></button></div>}
     {mode !== 'register' && <form onSubmit={submit} className="mt-5 space-y-4">
       {mode === 'customer-register' && <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your name" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />}
-      <input required type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Phone number with country code, e.g. +919876543210" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+      <input required type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => { setForm({ ...form, phone: e.target.value }); setPhoneVerificationToken(''); }} placeholder="Phone number with country code, e.g. +919876543210" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+      {mode === 'customer-register' && <PhoneVerification key={form.phone} phone={form.phone} verified={Boolean(phoneVerificationToken)} onVerified={setPhoneVerificationToken} />}
       {mode === 'customer-register' && <input type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email address (optional)" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />}
       <div className="relative"><input required minLength={mode === 'customer-register' ? 8 : undefined} type={showPassword ? 'text' : 'password'} autoComplete={mode === 'customer-register' ? 'new-password' : 'current-password'} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 pr-11 text-sm" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
       {mode === 'login' && <button type="button" onClick={() => setResetNotice('Password reset through phone OTP will be available soon. Until then, please contact support to recover your account.')} className="-mt-1 text-left text-xs font-semibold text-emerald-700 hover:underline">Forgot password?</button>}
-      <button disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-60">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === 'login' ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{mode === 'login' ? 'Sign in' : 'Create customer account'}</button>
+      <button disabled={loading || (mode === 'customer-register' && !phoneVerificationToken)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-60">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === 'login' ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{mode === 'login' ? 'Sign in' : 'Create customer account'}</button>
     </form>}
-    <button onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setResetNotice(''); }} className="mt-5 w-full text-xs font-semibold text-emerald-700 hover:underline">{mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button>
+    <button onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setResetNotice(''); setPhoneVerificationToken(''); }} className="mt-5 w-full text-xs font-semibold text-emerald-700 hover:underline">{mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button>
   </div>;
 }

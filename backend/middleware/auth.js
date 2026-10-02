@@ -21,4 +21,20 @@ const authenticate = (req, res, next) => {
   }
 };
 
+const withAccountValidation = (pool) => (req, res, next) => authenticate(req, res, async () => {
+  try {
+    const result = await pool.query('SELECT auth_version FROM users WHERE id = $1', [req.user.userId]);
+    const account = result.rows[0];
+    const tokenVersion = Number(req.user.authVersion || 1);
+    if (!account || Number(account.auth_version || 1) !== tokenVersion) {
+      return res.status(401).json({ error: 'This session has been signed out. Please sign in again.' });
+    }
+    return next();
+  } catch (error) {
+    console.error('Account session validation failed:', error.message);
+    return res.status(503).json({ error: 'Unable to validate this session.' });
+  }
+});
+
 module.exports = authenticate;
+module.exports.withAccountValidation = withAccountValidation;

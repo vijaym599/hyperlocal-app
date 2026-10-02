@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X } from 'lucide-react';
+import { productUrl, shopUrl } from '../publicUrls';
 import ProductSkeleton from './ProductSkeleton';
 import { readDiscoveryCache, writeDiscoveryCache, discoveryKey } from '../discoveryCache.mjs';
 import { API_BASE_URL } from '../config';
@@ -502,8 +503,9 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const shareProduct = async (product) => {
     const text = `${product.name} at ${product.shop_name} — ₹${product.price}`;
     try {
-      if (navigator.share) await navigator.share({ title: product.name, text });
-      else await navigator.clipboard.writeText(text);
+      const url = new URL(productUrl(product), window.location.origin).href;
+      if (navigator.share) await navigator.share({ title: product.name, text, url });
+      else await navigator.clipboard.writeText(`${text}\n${url}`);
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Share error:', error);
     }
@@ -754,7 +756,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                         
                         {/* Name & Price */}
                         <h4 className="font-bold text-slate-800 text-base line-clamp-1">
-                          {p.name || 'Unnamed Product'}
+                          <a href={productUrl(p)} onClick={(event) => event.stopPropagation()}>{p.name || 'Unnamed Product'}</a>
                         </h4>
                         
                         <div className="flex items-center justify-between mt-1">
@@ -863,7 +865,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                         {/* Shop Title */}
                         <div className="flex items-start justify-between gap-2">
                           <h4 className="font-bold text-slate-800 text-base line-clamp-1">
-                            {shop.name}
+                            <a href={shopUrl(shop)} onClick={(event) => event.stopPropagation()}>{shop.name}</a>
                           </h4>
                           {distText && (
                             <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold shrink-0">

@@ -8,6 +8,7 @@ const searchProducts = Array.from({ length: 25 }, (_, index) => ({ id: index + 1
 const pool = {
   query: async (sql, values) => {
     calls.push({ sql, values });
+    if (sql.includes('SELECT auth_version FROM users')) return { rows: [{ auth_version: 1 }] };
     if (sql.includes('WITH ranked_products')) return { rows: searchProducts.slice(values[7], values[7] + values[6]) };
     if (sql.includes('INSERT INTO product_requests')) return { rows: [{ id: 1 }] };
     if (sql.includes('SELECT subscription_plan')) return { rows: [{ subscription_plan: 'pro' }] };
@@ -58,6 +59,40 @@ test('discovery returns ten products per page and exposes subsequent pages', asy
   assert.equal(last.results.length, 5);
   assert.equal(last.has_more, false);
   assert.equal(last.next_page, null);
+});
+
+test('health checks the database and returns an unavailable status without exposing errors', async () => {
+  const response = await fetch(base + '/api/health');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'ok' });
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('x-powered-by'), null);
+  const query = pool.query;
+  pool.query = async () => { throw new Error('private database credentials'); };
+  try {
+    const unavailable = await fetch(base + '/api/health');
+    assert.equal(unavailable.status, 503);
+    assert.deepEqual(await unavailable.json(), { status: 'unavailable' });
+  } finally { pool.query = query; }
+});
+
+test('production cannot grant paid accounts or billing changes using client payment references', async () => {
+  const old = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  const before = calls.length;
+  try {
+    assert.equal((await post('/api/auth/register-shop', { selected_plan: 'pro', payment_id: 'MOCK_PAY_1' })).status, 503);
+    const response = await fetch(base + '/api/shops/1/subscription', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` },
+      body: JSON.stringify({ action: 'change', plan: 'pro', payment_id: 'arbitrary-reference' }),
+    });
+    assert.equal(response.status, 503);
+    const newQueries = calls.slice(before).filter(({ sql }) => !sql.includes('SELECT auth_version FROM users'));
+    assert.equal(newQueries.length, 0);
+  } finally {
+    if (old === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = old;
+  }
 });
 
 test('discovery validates paging, coordinates and categories', async () => {

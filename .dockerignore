@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+.agents
+.codex
+.aws
+**/*.log
+backend/uploads
+backups

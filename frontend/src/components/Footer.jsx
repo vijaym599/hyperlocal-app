@@ -11,6 +11,8 @@ import {
   Store,
 } from 'lucide-react';
 
+import { shopDirectoryUrl } from '../publicUrls';
+
 function FooterLink({ children, onClick }) {
   return (
     <button
@@ -29,6 +31,7 @@ export default function Footer({ setActiveTab }) {
 
   return (
     <footer className="relative mt-auto overflow-hidden bg-slate-950 text-slate-300">
+      <a href={shopDirectoryUrl} className="relative mx-auto block max-w-7xl px-5 pt-6 text-sm text-emerald-300">Browse local shop catalogs</a>
       <div className="pointer-events-none absolute -left-24 top-0 h-72 w-72 rounded-full bg-emerald-500/15 blur-3xl" />
       <div className="pointer-events-none absolute right-0 top-20 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
 

@@ -23,12 +23,18 @@ function geocode(parameters) {
     if (current && Date.now() - current.time < 30 * 60 * 1000) return current.value;
     const wait = Math.max(0, 1100 - (Date.now() - lastRequest));
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-    lastRequest = Date.now();
     const endpoint = parameters.has('q') || parameters.has('postalcode') ? 'search' : 'reverse';
-    const value = await fetchJson(
+    let value;
+    try {
+      value = await fetchJson(
       `${process.env.GEOCODER_BASE_URL || 'https://nominatim.openstreetmap.org'}/${endpoint}?${parameters}`,
       { 'User-Agent': process.env.GEOCODER_USER_AGENT || 'Nearbuy-Hyperlocal/1.0', 'Accept-Language': 'en' }
-    );
+      );
+    } finally {
+      // Space requests from completion: connection setup can delay provider receipt.
+      // Failed requests must also respect the shared provider interval.
+      lastRequest = Date.now();
+    }
     if (cache.size >= 500) cache.delete(cache.keys().next().value);
     cache.set(key, { value, time: Date.now() });
     return value;
