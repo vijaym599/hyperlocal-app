@@ -85,6 +85,8 @@ const AVAILABILITY_STATUSES = new Set(['available', 'low_stock', 'out_of_stock']
 const productFallbackImage = (name, brand = '') => `https://loremflickr.com/640/480/${encodeURIComponent(`${brand || ''} ${name || 'local product'}`.trim())}`;
 const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const hasOversizedImagePayload = (value) => typeof value === 'string' && value.startsWith('data:image/') && value.length > 1_700_000;
+const validProductPrice = value => ['string', 'number'].includes(typeof value) && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 99999999.99;
+const validProductText = body => typeof body.name === 'string' && body.name.trim().length > 0 && body.name.length <= 255 && ['description', 'brand', 'image_url'].every(key => body[key] == null || typeof body[key] === 'string') && (body.brand == null || body.brand.length <= 100);
 const isValidOfferDate = (value) => {
   if (!value) return true;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -188,6 +190,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
       account_phone,
       password, 
       shop_name, 
+      city,
       category,
       address,
       latitude, 
@@ -205,6 +208,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
     if (!account_phone || !password || !shop_name) {
       return res.status(400).json({ error: 'Account phone number, password, and shop name are required.' });
     }
+    if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
     if (!Object.hasOwn(SUBSCRIPTION_LIMITS, selected_plan) || !payment_id) {
       return res.status(400).json({ error: 'Choose one of the four subscription plans to create a shop account.' });
     }
@@ -249,8 +253,8 @@ app.post('/api/auth/register-shop', async (req, res) => {
 
     const shopResult = await client.query(
       `INSERT INTO shops
-        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END)
+        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at, city)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END, $16)
        RETURNING *`,
       [
         newUser.id,
@@ -267,7 +271,8 @@ app.post('/api/auth/register-shop', async (req, res) => {
         closing_time || null,
         selected_plan || 'free',
         payment_id || null,
-        VERIFIED_SUBSCRIPTION_PLANS.has(selected_plan)
+        VERIFIED_SUBSCRIPTION_PLANS.has(selected_plan),
+        city?.trim() || null
       ]
     );
 
@@ -411,11 +416,14 @@ app.get('/api/shops/:shopId/products', async (req, res) => {
 // Public shop portfolio: a complete catalog for one shop, independent of nearby search filters.
 app.get('/api/shops/:shopId/portfolio', async (req, res) => {
   const shopId = Number(req.params.shopId);
-  if (!shopId) return res.status(400).json({ error: 'A valid shop is required.' });
+  if (!Number.isSafeInteger(shopId) || shopId < 1 || shopId > 2147483647) return res.status(400).json({ error: 'A valid shop is required.' });
   try {
     const [shopResult, productsResult] = await Promise.all([
       pool.query(
-        `SELECT s.*, COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM shop_reviews WHERE shop_id = s.id), 0) AS average_rating,
+        `SELECT s.id, s.name, s.category, s.address, s.city, s.latitude, s.longitude,
+                s.google_map_link, s.phone, s.whatsapp_number, s.opening_hours,
+                s.opening_time, s.closing_time, s.is_open, s.is_verified,
+                COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM shop_reviews WHERE shop_id = s.id), 0) AS average_rating,
                 (SELECT COUNT(*)::int FROM shop_reviews WHERE shop_id = s.id) AS review_count
          FROM shops s WHERE s.id = $1`, [shopId]
       ),
@@ -460,7 +468,7 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
   const parsedPrice = Number(price);
 
   if (!shopId) return res.status(400).json({ error: 'Invalid Shop ID!' });
-  if (!name?.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0) {
+  if (!validProductText(req.body) || !validProductPrice(price)) {
     return res.status(400).json({ error: 'A product name and a valid price are required!' });
   }
   if (availability_status && !AVAILABILITY_STATUSES.has(availability_status)) {
@@ -525,8 +533,8 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
     const limit = SUBSCRIPTION_LIMITS[shop.subscription_plan] || 10;
     if (existingCount + incoming.length > limit) return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
     const values = incoming.map((item, index) => {
-      const name = String(item.name || '').trim(); const price = Number(item.price);
-      if (!name || item.price == null || String(item.price).trim() === '' || !Number.isFinite(price) || price < 0) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
+      if (!item || !validProductText(item) || !validProductPrice(item.price)) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
+      const name = item.name.trim(); const price = Number(item.price);
       const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw new Error(`Row ${index + 1} has an invalid availability status.`);
       if (hasOversizedImagePayload(item.image_url)) throw new Error(`Row ${index + 1} has an image that is too large.`);
       const brand = String(item.brand || '').trim(); const image = String(item.image_url || '').trim() || productFallbackImage(name, brand);
@@ -544,6 +552,8 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
 app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
   const { name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time } = req.body;
+  const { city } = req.body;
+  if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
 
   if (!shopId || !name?.trim() || !category) {
     return res.status(400).json({ error: 'Shop name and category are required.' });
@@ -571,6 +581,7 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
            opening_hours = COALESCE($9, opening_hours),
            opening_time = $10,
            closing_time = $11,
+           city = CASE WHEN $13::boolean THEN $14::varchar ELSE city END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $12
        RETURNING *`,
@@ -586,7 +597,9 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
         opening_hours?.trim() || null,
         opening_time || null,
         closing_time || null,
-        shopId
+        shopId,
+        Object.hasOwn(req.body, 'city'),
+        city?.trim() || null
       ]
     );
 
@@ -653,7 +666,7 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
   const { name, description, brand, price, image_url, availability_status } = req.body;
   const parsedPrice = Number(price);
 
-  if (!name?.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0) {
+  if (!validProductText(req.body) || !validProductPrice(price)) {
     return res.status(400).json({ error: 'Product name and price are required!' });
   }
   if (availability_status && !AVAILABILITY_STATUSES.has(availability_status)) {
@@ -667,7 +680,9 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
 
     const sql = `
       UPDATE products p
-      SET name = $1, description = COALESCE($2, p.description), brand = COALESCE($3, p.brand),
+      SET name = $1,
+          description = CASE WHEN $9::boolean THEN $2::text ELSE p.description END,
+          brand = CASE WHEN $10::boolean THEN $3::varchar ELSE p.brand END,
           price = $4, image_url = $5,
           availability_status = COALESCE($6, p.availability_status),
           availability_updated_at = CASE WHEN $6 IS NULL THEN p.availability_updated_at ELSE CURRENT_TIMESTAMP END,
@@ -685,7 +700,9 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
       prodImg,
       availability_status || null,
       id,
-      req.user.userId
+      req.user.userId,
+      Object.hasOwn(req.body, 'description'),
+      Object.hasOwn(req.body, 'brand')
     ]);
 
     if (result.rows.length === 0) {

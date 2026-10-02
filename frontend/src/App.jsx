@@ -15,11 +15,15 @@ import PricingPage from './components/PricingPage';
 import Offers from './components/Offers';
 import { referralFromSearch } from './referrals.mjs';
 import { trackPageVisit } from './analytics.mjs';
+import { shopIdFromSearch } from './shopLinks.mjs';
 
 export default function App() {
   // Resolve the requested page against the current account's access.
-  const [requestedTab, setActiveTab] = useState(() => referralFromSearch(window.location.search) ? 'my-shop' : null);
-  const [portfolioShop, setPortfolioShop] = useState(null);
+  const [requestedTab, setActiveTab] = useState(() => new URLSearchParams(window.location.search).has('shop') ? 'shop-portfolio' : referralFromSearch(window.location.search) ? 'my-shop' : null);
+  const [portfolioShop, setPortfolioShop] = useState(() => {
+    const id = shopIdFromSearch(window.location.search);
+    return id ? { id } : null;
+  });
   
   const [session, setSession] = useState(() => {
     try {
@@ -68,7 +72,7 @@ export default function App() {
 
         {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers />}
 
-        {activeTab === 'shop-portfolio' && (role === 'guest' || role === 'customer') && portfolioShop && <ShopPortfolio shopId={portfolioShop.id} initialShop={portfolioShop} onBack={() => setActiveTab('explore')} />}
+        {activeTab === 'shop-portfolio' && portfolioShop && <ShopPortfolio session={session} key={portfolioShop.id} shopId={portfolioShop.id} initialShop={portfolioShop} backLabel={role === 'shop_owner' || role === 'admin' ? 'Back to dashboard' : 'Back to nearby shops'} onBack={() => setActiveTab(homeTab(session))} />}
 
         {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={handleLoginSuccess} onChooseShop={() => setActiveTab('my-shop')} onBack={() => setActiveTab('explore')} />}
 

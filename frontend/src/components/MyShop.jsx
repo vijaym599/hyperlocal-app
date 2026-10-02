@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 import { referralFromSearch } from '../referrals.mjs';
 import PhoneVerification from './PhoneVerification';
+import ShopShare from './ShopShare';
 import IndianPhoneInput from './IndianPhoneInput';
 import { indianPhoneE164 } from '../phone.mjs';
 
@@ -109,6 +110,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [shopData, setShopData] = useState(session?.shop || null);
   const [products, setProducts] = useState([]);
   const [productSearch, setProductSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState('all');
+  const [productPage, setProductPage] = useState(1);
+  const [productsError, setProductsError] = useState('');
   const [updatingStockId, setUpdatingStockId] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
@@ -137,6 +141,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     email: '',
     password: '',
     shop_name: '',
+    city: '',
     category: '', // Added Category
     address: '',
     phone: '',
@@ -155,7 +160,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [editingShop, setEditingShop] = useState(false);
   const [dashboardSection, setDashboardSection] = useState('catalog');
   const [bulkMessage, setBulkMessage] = useState('');
-  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', phone: '', whatsapp_number: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
+  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', city: '', phone: '', whatsapp_number: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
   const [autoOpen, setAutoOpen] = useState(shopData?.is_open !== false);
 
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
@@ -163,7 +168,18 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const hasShopInsights = INSIGHT_PLANS.has(shopData?.subscription_plan);
   const currentDate = new Date();
   const todayIso = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
-  const filteredProducts = products.filter((product) => [product.name, product.brand, product.description].some((value) => String(value || '').toLowerCase().includes(productSearch.trim().toLowerCase())));
+  const stockCounts = useMemo(() => products.reduce((counts, p) => {
+    const status = p.availability_status || 'available';
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {}), [products]);
+  const filteredProducts = useMemo(() => {
+    const term = productSearch.trim().toLowerCase();
+    return products.filter(p => (stockFilter === 'all' || (p.availability_status || 'available') === stockFilter) && [p.name, p.brand, p.description].some(value => String(value || '').toLowerCase().includes(term)));
+  }, [products, productSearch, stockFilter]);
+  const pageCount = Math.max(1, Math.ceil(filteredProducts.length / 12));
+  const currentPage = Math.min(productPage, pageCount);
+  const visibleProducts = filteredProducts.slice((currentPage - 1) * 12, currentPage * 12);
   const authenticatedJsonHeaders = () => ({
     'Content-Type': 'application/json',
     ...(session?.token ? { Authorization: `Bearer ${session.token}` } : {})
@@ -188,7 +204,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   }, [shopData?.id, shopData?.opening_time, shopData?.closing_time]);
 
   useEffect(() => {
-    if (!shopData?.id || !session?.token || !INSIGHT_PLANS.has(shopData.subscription_plan)) return;
+    if (dashboardSection !== 'insights' || !shopData?.id || !session?.token || !INSIGHT_PLANS.has(shopData.subscription_plan)) return;
     const loadInsights = async () => {
       setInsightsLoading(true);
       setInsightsError('');
@@ -204,7 +220,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       }
     };
     void loadInsights();
-  }, [shopData?.id, shopData?.subscription_plan, session?.token, insightsPeriod]);
+  }, [shopData?.id, shopData?.subscription_plan, session?.token, insightsPeriod, dashboardSection]);
 
   const updateSubscription = async (action, plan = null) => {
     if (!shopData?.id) return;
@@ -223,16 +239,18 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const fetchProductsFromBackend = async (shopId) => {
     if (!shopId) return;
     setFetchingProducts(true);
+    setProductsError('');
     try {
       const res = await fetch(`${API_BASE_URL}/api/shops/${shopId}/products`);
       if (res.ok) {
         const data = await res.json();
         setProducts(data.products || []);
       } else {
-        console.error("Failed to fetch products. Server Status:", res.status);
+        setProductsError('Unable to load products. Please refresh to try again.');
       }
     } catch (err) {
       console.error("Failed to fetch products:", err);
+      setProductsError('Unable to load products. Please check your connection and refresh.');
     } finally {
       setFetchingProducts(false);
     }
@@ -250,12 +268,12 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   useEffect(() => {
-    if (!shopData?.id || !session?.token) return;
+    if (dashboardSection !== 'offers' || !shopData?.id || !session?.token) return;
     void Promise.resolve().then(async () => {
       try { setShopOffers(await fetchShopOffers(shopData.id, session.token)); }
       catch (error) { setOfferMessage(error.message); }
     });
-  }, [shopData, session]);
+  }, [shopData?.id, session?.token, dashboardSection]);
 
   const handleImageFileUpload = async (e, isEdit = false) => {
     const file = e.target.files?.[0];
@@ -582,6 +600,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const openShopEditor = () => {
     setShopForm({
+      city: shopData?.city || '',
       name: shopData?.name || shopData?.shop_name || '',
       category: shopData?.category || '',
       address: shopData?.address || '',
@@ -686,6 +705,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <div className="relative"><input type={showRegisterPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} placeholder="Password (minimum 8 characters) *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowRegisterPassword(!showRegisterPassword)} aria-label={showRegisterPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showRegisterPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
             
             <input type="text" required placeholder="Shop Name *" value={regForm.shop_name} onChange={(e) => setRegForm({ ...regForm, shop_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="e.g. Chennai" value={regForm.city} onChange={e => setRegForm({ ...regForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
             
             {/* SHOP CATEGORY SELECT DROPDOWN */}
             <select
@@ -740,7 +760,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 my-6">
               {SUBSCRIPTION_PLANS.map((plan) => (
                 <div key={plan.id} className="border border-slate-200 p-4 rounded-xl bg-white flex flex-col justify-between shadow-xs hover:border-emerald-500 transition">
                   <div>
@@ -771,9 +791,28 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-4 font-sans">
+    <div className="w-full px-3 py-3 font-sans sm:px-5 lg:px-6">
+      <div className="grid min-w-0 gap-5 lg:grid-cols-[240px_minmax(0,1fr)] xl:gap-6">
+        <aside className="min-w-0 lg:sticky lg:top-20 lg:self-start">
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm lg:p-4">
+            <div className="hidden border-b border-slate-100 px-2 pb-4 lg:block"><Store className="mb-3 h-7 w-7 text-emerald-700" /><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Shop workspace</p><p className="mt-1 truncate font-bold text-slate-900">{shopData?.name || 'My Shop'}</p></div>
+            <nav aria-label="Shop dashboard" className="flex gap-2 overflow-x-auto lg:mt-4 lg:flex-col lg:overflow-visible">
+              {[
+                ['catalog', 'Products & stock', Package],
+                ['offers', 'Offers', Tag],
+                ...(hasShopInsights ? [['insights', 'Customer activity', BarChart3]] : []),
+                ['billing', 'Billing', CalendarDays],
+              ].map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
+                'flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition lg:w-full ' + (dashboardSection === id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800')
+              }><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></button>)}
+            </nav>
+            <div className="mt-5 hidden space-y-2 border-t border-slate-100 pt-4 lg:block"><button type="button" onClick={openShopEditor} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Pencil className="h-4 w-4" />Edit shop details</button>{typeof onLogout === 'function' && <button type="button" onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-rose-600 hover:bg-rose-50"><LogOut className="h-4 w-4" />Sign out</button>}</div>
+          </div>
+        </aside>
+        <div className="min-w-0">
+
       {/* Dashboard Banner */}
-      <div className="bg-slate-900 text-white rounded-2xl p-6 mb-6 flex justify-between items-center shadow-md">
+      <div className="bg-slate-900 text-white rounded-2xl p-5 sm:p-6 mb-6 flex flex-col gap-5 lg:flex-row lg:justify-between lg:items-center shadow-md">
         <div>
           <div className="flex items-center gap-2 text-xs uppercase tracking-wider font-semibold text-emerald-400 mb-1">
             <Store className="w-3.5 h-3.5" />
@@ -792,13 +831,13 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             Plan: <span className="text-emerald-400 font-bold uppercase">{shopData?.subscription_plan || 'Free'}</span> ({products.length} / {maxProductsAllowed >= 9999 ? '∞' : maxProductsAllowed} Products)
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-xl px-3 py-2 text-xs font-bold ${autoOpen ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>{autoOpen ? 'Auto: Open now' : 'Auto: Closed'}</span>
-          <button onClick={openShopEditor} className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
+          <button onClick={openShopEditor} className="lg:hidden p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
             <Pencil className="w-4 h-4" /><span className="hidden sm:inline">Edit Shop</span>
           </button>
-          <button onClick={() => setDashboardSection('billing')} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition text-xs font-semibold">Billing</button>
           <button 
+            disabled={fetchingProducts}
             onClick={() => fetchProductsFromBackend(shopData?.id)} 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
             title="Refresh Products"
@@ -809,7 +848,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           {typeof onLogout === 'function' && (
             <button 
               onClick={onLogout} 
-              className="p-2 bg-rose-900/60 hover:bg-rose-900 text-rose-200 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
+              className="lg:hidden p-2 bg-rose-900/60 hover:bg-rose-900 text-rose-200 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
               title="Sign Out"
             >
               <LogOut className="w-4 h-4" />
@@ -819,7 +858,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       </div>
 
-      <div className="mb-6 flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"><button type="button" onClick={() => setDashboardSection('catalog')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'catalog' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Products & stock</button><button type="button" onClick={() => setDashboardSection('offers')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'offers' ? 'bg-orange-500 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Offers</button>{hasShopInsights && <button type="button" onClick={() => setDashboardSection('insights')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'insights' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Customer activity</button>}<button type="button" onClick={() => setDashboardSection('billing')} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold ${dashboardSection === 'billing' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>Billing</button></div>
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[['Listed products', products.length, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { setDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
+      </div>
+      {shopData?.id && <ShopShare shop={shopData} />}
+
 
       {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p><button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : 'Upgrade / switch'}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
 
@@ -844,10 +887,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
       {editingShop && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
+          <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 text-emerald-600" /> Edit shop details</h3><button onClick={() => setEditingShop(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button></div>
             <form onSubmit={handleUpdateShop} className="space-y-3">
               <input required value={shopForm.name} onChange={(e) => setShopForm({ ...shopForm, name: e.target.value })} placeholder="Shop name" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="e.g. Chennai" value={shopForm.city} onChange={e => setShopForm({ ...shopForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
               <select required value={shopForm.category} onChange={(e) => setShopForm({ ...shopForm, category: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><option value="" disabled>Select category</option>{SHOP_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>
               <textarea rows="2" value={shopForm.address} onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })} placeholder="Shop address" className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><input type="tel" value={shopForm.phone} onChange={(e) => setShopForm({ ...shopForm, phone: e.target.value })} placeholder="Call number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="tel" value={shopForm.whatsapp_number} onChange={(e) => setShopForm({ ...shopForm, whatsapp_number: e.target.value })} placeholder="WhatsApp number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
@@ -861,7 +905,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       )}
 
-      {dashboardSection === 'catalog' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {dashboardSection === 'catalog' && <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-6">
         {/* Add Product Form */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
           <h3 className="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
@@ -875,7 +919,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Price (₹) *</label>
-              <input type="number" required placeholder="250" value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              <input type="number" min="0" max="99999999.99" step="0.01" required placeholder="250" value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
             </div>
 
             <div>
@@ -928,13 +972,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
 
         {/* Product List */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="min-w-0 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-bold text-slate-800 text-lg">Listed Products ({products.length})</h3>
-            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search products" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
+            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }} placeholder="Search products" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
           </div>
 
-          {products.length === 0 ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="text-xs font-semibold text-slate-600">Stock filter <select value={stockFilter} onChange={event => { setStockFilter(event.target.value); setProductPage(1); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="all">All products</option>{AVAILABILITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span className="text-xs text-slate-500">{filteredProducts.length} matching products</span></div>
+          {productsError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{productsError}</p>}
+          {fetchingProducts && products.length === 0 ? <div role="status" className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500"><Loader2 className="h-5 w-5 animate-spin" />Loading products…</div> : products.length === 0 ? (
             <div className="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">
               <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-medium text-slate-500">No products added yet.</p>
@@ -944,7 +990,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">No products match “{productSearch}”.</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredProducts.map((p) => (
+              {visibleProducts.map((p) => (
                 <div key={p.id} className="border border-slate-200 rounded-xl p-3 transition hover:border-emerald-300 bg-white shadow-2xs">
                   <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-hidden">
@@ -954,7 +1000,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                       loading="lazy"
                       decoding="async"
                       className="w-16 h-16 object-cover rounded-lg bg-slate-100 border border-slate-100 shrink-0" 
-                      onError={(e) => { e.target.src = productFallbackImage(p); }}
+                      onError={(e) => { if (e.target.dataset.fallback) return; e.target.dataset.fallback = 'true'; e.target.src = productFallbackImage(p); }}
                     />
                     <div className="overflow-hidden">
                       <h4 className="font-bold text-sm text-slate-800 truncate">{p.name}</h4>
@@ -974,13 +1020,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               ))}
             </div>
           )}
+          {pageCount > 1 && <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4"><button type="button" disabled={currentPage === 1} onClick={() => setProductPage(currentPage - 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-40">Previous</button><span className="text-xs text-slate-500">Page {currentPage} of {pageCount}</span><button type="button" disabled={currentPage === pageCount} onClick={() => setProductPage(currentPage + 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-40">Next</button></div>}
         </div>
       </div>}
 
       {/* EDIT PRODUCT MODAL POPUP */}
       {editingProduct && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100">
+          <div className="bg-white rounded-2xl max-w-md max-h-[90dvh] overflow-y-auto w-full p-6 shadow-xl border border-slate-100">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
                 <Pencil className="w-4 h-4 text-emerald-600" /> Edit Product
@@ -1009,6 +1056,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Price (₹) *</label>
                 <input 
                   type="number" 
+                  min="0" max="99999999.99" step="0.01"
                   required 
                   value={editingProduct.price} 
                   onChange={(e) => setEditingProduct({ ...editingProduct, price: e.target.value })} 
@@ -1083,6 +1131,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 };

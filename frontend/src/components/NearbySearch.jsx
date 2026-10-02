@@ -353,7 +353,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   useEffect(() => {
     if (!userLocation) return undefined;
     const searchTimer = window.setTimeout(() => {
-      fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all');
+      fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation);
     }, searchQuery ? 250 : 0);
     return () => {
       window.clearTimeout(searchTimer);

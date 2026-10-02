@@ -12,6 +12,8 @@ const pool = {
     if (sql.includes('WITH ranked_products')) return { rows: searchProducts.slice(values[7], values[7] + values[6]) };
     if (sql.includes('INSERT INTO product_requests')) return { rows: [{ id: 1 }] };
     if (sql.includes('SELECT subscription_plan')) return { rows: [{ subscription_plan: 'pro' }] };
+    if (sql.includes('UPDATE products p')) return { rows: [{ id: 1, name: values[0], description: values[1], brand: values[2], price: values[3] }] };
+    if (sql.includes('SELECT s.id, s.name, s.category')) return { rows: [{ id: 1, name: 'Test shop' }] };
     if (sql.includes('COUNT(*)')) return { rows: [{ count: 0 }] };
     if (sql.includes('SELECT id FROM shops')) return { rows: [{ id: 1 }] };
     return { rows: [] };
@@ -140,6 +142,30 @@ test('bulk import rejects blank prices but accepts a real zero price', async () 
     assert.match((await response.json()).error, /valid price/);
   }
   assert.equal((await post('/api/shops/1/products/bulk', { products: [{ name: 'Rice', price: 0 }] }, true)).status, 201);
+});
+
+test('product create and edit reject blank, malformed and oversized prices', async () => {
+  const update = body => fetch(base + '/api/products/1', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` }, body: JSON.stringify(body) });
+  for (const price of ['', ' ', null, undefined, true, [], 100000000, -1]) {
+    assert.equal((await post('/api/shops/1/products', { name: 'Rice', price }, true)).status, 400);
+    assert.equal((await update({ name: 'Rice', price })).status, 400);
+  }
+  assert.equal((await update({ name: {}, price: 10 })).status, 400);
+  assert.equal((await update({ name: 'Rice', price: 0, description: '', brand: '' })).status, 200);
+  const clear = calls.findLast(call => call.sql.includes('UPDATE products p'));
+  assert.equal(clear.values[1], null);
+  assert.equal(clear.values[2], null);
+  assert.deepEqual(clear.values.slice(8), [true, true]);
+  assert.equal((await update({ name: 'Rice', price: '12.50' })).status, 200);
+  assert.deepEqual(calls.findLast(call => call.sql.includes('UPDATE products p')).values.slice(8), [false, false]);
+});
+
+test('public portfolio rejects invalid ids and selects no billing fields', async () => {
+  for (const id of ['abc', '-1', '1.5', '2147483648']) assert.equal((await fetch(base + `/api/shops/${id}/portfolio`)).status, 400);
+  const response = await fetch(base + '/api/shops/1/portfolio');
+  assert.equal(response.status, 200);
+  const sql = calls.findLast(call => call.sql.includes('FROM shops s WHERE s.id')).sql;
+  assert.doesNotMatch(sql, /s\.\*|payment_id|user_id|subscription/);
 });
 
 test('startup waits for initialization before scheduling or listening', async () => {

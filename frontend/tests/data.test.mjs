@@ -16,6 +16,11 @@ test('restored sessions and restricted navigation resolve to the correct home', 
   assert.equal(resolveTab('activity', null), 'explore');
   assert.equal(resolveTab('my-shop', customer), 'explore');
   assert.equal(resolveTab('shop-portfolio', customer, null), 'explore');
+  assert.equal(resolveTab('shop-portfolio', owner, { id: 1 }), 'shop-portfolio');
+  assert.equal(resolveTab('shop-portfolio', admin, { id: 1 }), 'shop-portfolio');
+  assert.equal(resolveTab('shop-portfolio', customer, { id: 1 }), 'shop-portfolio');
+  assert.equal(resolveTab('shop-portfolio', null, { id: 1 }), 'shop-portfolio');
+  assert.equal(resolveTab('shop-portfolio', owner, null), 'my-shop');
   assert.equal(resolveTab('privacy', admin), 'privacy');
 });
 
