@@ -41,7 +41,7 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
               Explore
             </button>}
 
-            {(role === 'guest' || role === 'customer') && <button onClick={() => setActiveTab('offers')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'offers' ? 'border border-orange-200 bg-orange-50 text-orange-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'}`}><Tag className="h-4 w-4" />Offers</button>}
+            {(role === 'guest' || role === 'customer') && <button onClick={() => setActiveTab('offers')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'offers' ? 'border border-orange-700 bg-orange-700 text-white shadow-sm' : 'border border-orange-200 bg-orange-50 text-orange-700 hover:border-orange-300 hover:bg-orange-100'}`}><Tag className="h-4 w-4" />Offers</button>}
 
             {(role === 'guest' || role === 'shop_owner') && <button
                 onClick={() => setActiveTab('my-shop')}
@@ -119,7 +119,7 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
             Explore
           </button>}
 
-          {(role === 'guest' || role === 'customer') && <button onClick={() => { setActiveTab('offers'); setIsOpen(false); }} className={`flex w-full items-center gap-2.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${activeTab === 'offers' ? 'bg-orange-500 text-white' : 'text-slate-700 hover:bg-slate-200/60'}`}><Tag className="h-4 w-4" />Offers</button>}
+          {(role === 'guest' || role === 'customer') && <button onClick={() => { setActiveTab('offers'); setIsOpen(false); }} className={`flex w-full items-center gap-2.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${activeTab === 'offers' ? 'bg-orange-700 text-white' : 'bg-orange-50 text-orange-700 hover:bg-orange-100'}`}><Tag className="h-4 w-4" />Offers</button>}
 
           {(role === 'guest' || role === 'shop_owner') && <button
             onClick={() => {

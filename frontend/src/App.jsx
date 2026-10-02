@@ -11,6 +11,7 @@ import ReportIssue from './components/ReportIssue';
 import CustomerAuth from './components/CustomerAuth';
 import UserActivity from './components/UserActivity';
 import ShopPortfolio from './components/ShopPortfolio';
+import ShopDirectory from './components/ShopDirectory';
 import PricingPage from './components/PricingPage';
 import Offers from './components/Offers';
 import { referralFromSearch } from './referrals.mjs';
@@ -68,6 +69,7 @@ export default function App() {
 
       {/* Dynamic Content based on activeTab */}
       <main className="flex-grow py-5 sm:py-8">
+        {activeTab === 'shop-directory' && <ShopDirectory onBack={() => setActiveTab(homeTab(session))} onOpenShop={shop => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} />}
         {activeTab === 'explore' && (role === 'guest' || role === 'customer') && <NearbySearch session={session} onRequireLogin={() => setActiveTab('customer-auth')} onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); }} />}
 
         {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers />}

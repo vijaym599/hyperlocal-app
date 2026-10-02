@@ -9,6 +9,7 @@ const pool = {
   query: async (sql, values) => {
     calls.push({ sql, values });
     if (sql.includes('SELECT auth_version FROM users')) return { rows: [{ auth_version: 1 }] };
+    if (sql.includes('AS product_count')) return { rows: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `Shop ${i + 1}`, product_count: 2 })) };
     if (sql.includes('WITH ranked_products')) return { rows: searchProducts.slice(values[7], values[7] + values[6]) };
     if (sql.includes('INSERT INTO product_requests')) return { rows: [{ id: 1 }] };
     if (sql.includes('SELECT subscription_plan')) return { rows: [{ subscription_plan: 'pro' }] };
@@ -61,6 +62,16 @@ test('discovery returns ten products per page and exposes subsequent pages', asy
   assert.equal(last.results.length, 5);
   assert.equal(last.has_more, false);
   assert.equal(last.next_page, null);
+});
+
+test('shop directory is public, paginated, and independent of SEO configuration', async () => {
+  const response = await fetch(base + '/api/shops/catalogs?page=2');
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.shops.length, 24);
+  assert.equal(data.has_more, true);
+  assert.deepEqual(calls.findLast(call => call.sql.includes('AS product_count')).values, [24]);
+  for (const page of ['0', '-1', 'abc', '1.5']) assert.equal((await fetch(base + `/api/shops/catalogs?page=${page}`)).status, 400);
 });
 
 test('health checks the database and returns an unavailable status without exposing errors', async () => {

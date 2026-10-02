@@ -399,6 +399,17 @@ app.post('/api/auth/login', async (req, res) => {
 // ==========================================
 // 3. FETCH PRODUCTS OF A SHOP (PostgreSQL)
 // ==========================================
+app.get('/api/shops/catalogs', async (req, res) => {
+  const page = Number(req.query.page || 1);
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100000) return res.status(400).json({ error: 'Invalid page.' });
+  try {
+    const result = await pool.query(`SELECT s.id,s.name,s.category,s.address,s.city,s.is_verified,
+      (SELECT COUNT(*)::int FROM products p WHERE p.shop_id=s.id) AS product_count
+      FROM shops s ORDER BY s.name,s.id LIMIT 25 OFFSET $1`, [(page - 1) * 24]);
+    return res.json({ shops: result.rows.slice(0, 24), has_more: result.rows.length > 24 });
+  } catch { return res.status(500).json({ error: 'Unable to load shop catalogs. Please try again.' }); }
+});
+
 app.get('/api/shops/:shopId/products', async (req, res) => {
   const shopId = req.params.shopId;
 
