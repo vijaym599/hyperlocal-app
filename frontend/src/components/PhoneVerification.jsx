@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle2, Loader2, MessageCircle } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { readApiResponse } from '../apiResponse.mjs';
 
 export default function PhoneVerification({ phone, verified, onVerified }) {
   const [code, setCode] = useState('');
@@ -10,9 +11,7 @@ export default function PhoneVerification({ phone, verified, onVerified }) {
   const [error, setError] = useState('');
   const call = async (path, body) => {
     const response = await fetch(`${API_BASE_URL}/api/auth/phone-verification/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Unable to verify this phone number.');
-    return result;
+    return readApiResponse(response);
   };
   const send = async () => {
     if (busy) return;

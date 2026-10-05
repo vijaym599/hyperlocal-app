@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X } from 'lucide-react';
 import { productUrl, shopUrl } from '../publicUrls';
 import ProductSkeleton from './ProductSkeleton';
+import DistanceSelector from './DistanceSelector';
 import { readDiscoveryCache, writeDiscoveryCache, discoveryKey } from '../discoveryCache.mjs';
 import { API_BASE_URL } from '../config';
 
@@ -644,7 +645,8 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       </section>
 
       {/* 3. Search Input Field */}
-      <div className="nearby-reveal nearby-reveal-delay-2 mb-10 rounded-3xl border border-slate-200/80 bg-white/90 p-2 shadow-[0_12px_30px_rgba(15,23,42,0.07)] backdrop-blur transition-shadow duration-300 hover:shadow-[0_18px_38px_rgba(15,23,42,0.1)] lg:flex lg:items-center lg:gap-2">
+      <div className="nearby-reveal nearby-reveal-delay-2 mb-10 rounded-3xl border border-slate-200/80 bg-white/90 p-2 shadow-[0_12px_30px_rgba(15,23,42,0.07)] backdrop-blur transition-shadow duration-300 hover:shadow-[0_18px_38px_rgba(15,23,42,0.1)]">
+        <div className="mb-2 lg:flex lg:items-center lg:gap-2">
         <div className="relative min-w-0 flex-1">
         <Search className="absolute left-4 top-4 h-5 w-5 text-emerald-600" />
         <input
@@ -668,23 +670,14 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2 px-1 pb-1 lg:mt-0 lg:shrink-0 lg:px-0 lg:pb-0">
-        <label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">
-          <span className="hidden xl:inline">Radius</span>
-          <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="bg-transparent text-xs font-bold text-emerald-700 outline-none">
-            <option value="">All distances</option>
-            <option value="2">2 km</option>
-            <option value="5">5 km</option>
-            <option value="10">10 km</option>
-            <option value="20">20 km</option>
-            <option value="50">50 km</option>
-          </select>
-        </label>
         <label className={`flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition ${availableOnly ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-700'}`}>
           <input type="checkbox" checked={availableOnly} onChange={(event) => setAvailableOnly(event.target.checked)} className="sr-only" />
           <span className={`h-2 w-2 rounded-full ${availableOnly ? 'bg-emerald-200' : 'bg-slate-300'}`} />
           Available only
         </label>
       </div>
+        </div>
+        <DistanceSelector value={radiusKm} onChange={setRadiusKm} />
       </div>
 
       {resultsMatch && (cachedResults || (loading && products.length > 0)) && <p role="status" className="mb-4 text-sm font-semibold text-emerald-700">{cachedResults ? (loading ? 'Showing saved results. Updating prices and stock…' : 'Showing saved results. Prices and stock may have changed.') : 'Updating products…'}</p>}

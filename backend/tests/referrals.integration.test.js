@@ -23,7 +23,7 @@ test('PostgreSQL referral registration, admin review and concurrent redemption w
       CREATE TABLE shops (id SERIAL PRIMARY KEY,user_id INTEGER REFERENCES users(id),name TEXT,
         category TEXT,address TEXT,latitude DOUBLE PRECISION,longitude DOUBLE PRECISION,google_map_link TEXT,
         phone TEXT,whatsapp_number TEXT,opening_hours TEXT,opening_time TIME,closing_time TIME,
-        subscription_plan TEXT,payment_id TEXT,is_verified BOOLEAN DEFAULT FALSE,verified_at TIMESTAMP,
+        subscription_plan VARCHAR(50),payment_id VARCHAR(255),is_verified BOOLEAN DEFAULT FALSE,verified_at TIMESTAMP,
         subscription_status TEXT DEFAULT 'active',subscription_cancelled_at TIMESTAMP,updated_at TIMESTAMP,
         city VARCHAR(80),subscription_months INTEGER,subscription_amount_paise INTEGER,
         subscription_started_at TIMESTAMPTZ,subscription_ends_at TIMESTAMPTZ);
@@ -143,7 +143,19 @@ test('PostgreSQL referral registration, admin review and concurrent redemption w
     assert.equal((await post('/api/referrals/redeem', 1, payout)).status, 400);
     const secondShop = await signup('+919000000012', code, 'basic');
     assert.equal(secondShop.status, 201);
+    const subscriptionPath = `/api/shops/${secondShop.body.shop.id}/subscription`;
+    const upgrade = { action: 'change', plan: 'pro', payment_id: 'MOCK_PAY_BASIC_UPGRADE' };
+    assert.equal((await patch(subscriptionPath, upgrade, 3)).status, 403, 'another user cannot upgrade the shop');
+    const upgraded = await patch(subscriptionPath, upgrade, secondShop.body.user.id);
+    assert.equal(upgraded.status, 200, 'Basic can upgrade immediately using the production column types');
+    assert.equal(upgraded.body.shop.subscription_plan, 'pro');
+    assert.equal(upgraded.body.shop.subscription_months, 1);
+    assert.equal(upgraded.body.shop.subscription_amount_paise, 19900);
+    assert.equal(upgraded.body.shop.is_verified, true);
+    assert.equal(upgraded.body.shop.user_id, secondShop.body.user.id, 'upgrades keep the same account');
     const secondEarning = (await summary()).body.earnings[0];
+    assert.equal(secondEarning.reward_paise, 2400, 'Basic referral reward covers the full six-month purchase');
+    assert.equal(secondEarning.subscription_plan, 'basic', 'upgrading does not change the first-payment reward');
     const secondPath = `/api/admin/referrals/earnings/${secondEarning.id}`;
     assert.equal((await patch(secondPath, { action: 'verify', payment_reference: 'SUB-100' })).status, 409, 'one subscription payment cannot verify two rewards');
     assert.equal((await patch(secondPath, { action: 'verify', payment_reference: 'SUB-200' })).status, 200);
@@ -153,7 +165,7 @@ test('PostgreSQL referral registration, admin review and concurrent redemption w
     assert.equal((await patch(nextPath, { action: 'paid', payment_reference: 'PAY-100' })).status, 409, 'one transfer cannot pay two redemptions');
     assert.equal((await summary()).body.wallet.paid_paise, 3980, 'failed duplicate payment must roll back');
     assert.equal((await patch(nextPath, { action: 'paid', payment_reference: 'PAY-200' })).status, 200);
-    assert.equal((await summary()).body.wallet.paid_paise, 4380);
+    assert.equal((await summary()).body.wallet.paid_paise, 6380);
     assert.equal((await get('/api/admin/referrals?page=0', 2)).status, 400);
     assert.equal((await patch('/api/admin/referrals/redemptions/999999', { action: 'approve' })).status, 404);
   } finally {

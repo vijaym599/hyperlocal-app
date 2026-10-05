@@ -469,13 +469,13 @@ app.patch('/api/shops/:shopId/subscription', authenticate, async (req, res) => {
       if (!Object.hasOwn(SUBSCRIPTION_LIMITS, plan) || !payment_id) return res.status(400).json({ error: 'Choose a valid paid plan and complete payment.' });
       const verified = VERIFIED_SUBSCRIPTION_PLANS.has(plan);
       const terms = subscriptionTerms(plan);
-      result = await pool.query(`UPDATE shops SET subscription_plan = $1, payment_id = $2, subscription_status = 'active', subscription_cancelled_at = NULL, is_verified = $3, verified_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,
+      result = await pool.query(`UPDATE shops SET subscription_plan = $1::varchar, payment_id = $2, subscription_status = 'active', subscription_cancelled_at = NULL, is_verified = $3, verified_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,
         subscription_months = $5, subscription_amount_paise = $6, subscription_started_at = CURRENT_TIMESTAMP,
-        subscription_ends_at = (CASE WHEN subscription_plan = $1 THEN GREATEST(COALESCE(subscription_ends_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END) + make_interval(months => $5::int),
+        subscription_ends_at = (CASE WHEN subscription_plan = $1::varchar THEN GREATEST(COALESCE(subscription_ends_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END) + make_interval(months => $5::int),
         updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`, [plan, payment_id, verified, shopId, terms.months, terms.amountPaise]);
     }
     return res.json({ message: action === 'cancel' ? 'Subscription renewal cancelled.' : 'Subscription updated.', shop: result.rows[0] });
-  } catch (err) { return res.status(500).json({ error: 'Unable to update subscription.' }); }
+  } catch (err) { console.error('Subscription update failed:', err.code || err.name); return res.status(500).json({ error: 'Unable to update subscription. Please try again shortly.' }); }
 });
 
 // ==========================================
