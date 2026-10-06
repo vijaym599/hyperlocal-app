@@ -14,6 +14,7 @@ const { mountAnalytics } = require('./analytics');
 const { mountAdminManagement } = require('./adminManagement');
 const { mountAccount } = require('./account');
 const { getPromotion, promotedSubscriptionTerms } = require('./subscriptionPromotions');
+const { mountCustomerAssistant } = require('./customerAssistant');
 
 const app = express();
 const authenticate = withAccountValidation(pool);
@@ -60,6 +61,7 @@ const rateLimit = (limit, windowMs, scope = '') => (req, res, next) => {
 };
 
 app.use('/api/auth', rateLimit(20, 15 * 60 * 1000));
+mountCustomerAssistant(app, pool, rateLimit(20, 10 * 60 * 1000, 'customer-assistant'));
 const rateLimitCleanup = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateLimitStore) if (entry.resetAt <= now) rateLimitStore.delete(key);

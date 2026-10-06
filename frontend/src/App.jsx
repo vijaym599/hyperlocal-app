@@ -18,6 +18,7 @@ import { trackPageVisit } from './analytics.mjs';
 import { shopIdFromSearch } from './shopLinks.mjs';
 
 const PricingPage = lazy(() => import('./components/PricingPage'));
+const CustomerAssistant = lazy(() => import('./components/CustomerAssistant'));
 
 export default function App() {
   // Resolve the requested page against the current account's access.
@@ -59,7 +60,7 @@ export default function App() {
   useEffect(() => { if (role !== 'admin') trackPageVisit(activeTab); }, [activeTab, role]);
 
   return (
-    <div className="min-h-screen bg-transparent font-sans text-slate-800 flex flex-col">
+    <div className="min-h-screen bg-transparent pb-24 font-sans text-slate-800 flex flex-col md:pb-0">
       {/* Navigation Bar */}
       <Navbar 
         activeTab={activeTab} 
@@ -76,6 +77,8 @@ export default function App() {
         {activeTab === 'explore' && (role === 'guest' || role === 'customer') && <NearbySearch session={session} onRequireLogin={() => setActiveTab('customer-auth')} onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); }} />}
 
         {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers />}
+
+        {activeTab === 'assistant' && (role === 'guest' || role === 'customer') && <Suspense fallback={<div className="mx-auto max-w-6xl px-5 py-20 text-center text-sm font-semibold text-slate-500">Loading AI assistant…</div>}><CustomerAssistant onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} /></Suspense>}
 
         {activeTab === 'shop-portfolio' && portfolioShop && <ShopPortfolio session={session} key={portfolioShop.id} shopId={portfolioShop.id} initialShop={portfolioShop} backLabel={role === 'shop_owner' || role === 'admin' ? 'Back to dashboard' : 'Back to nearby shops'} onBack={() => setActiveTab(homeTab(session))} onRequireLogin={() => { setPostLoginTab('shop-portfolio'); setActiveTab('customer-auth'); }} />}
 
