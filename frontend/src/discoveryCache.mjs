@@ -14,7 +14,11 @@ export function readDiscoveryCache(storage, api, now = Date.now()) {
 export function writeDiscoveryCache(storage, api, location, data, now = Date.now()) {
   try {
     // Never cache base64 photos: a small first-page snapshot must fit localStorage.
-    const results = data.results.slice(0, 10).map((row) => ({ ...row, image_url: row.image_url?.startsWith('data:') ? '' : row.image_url }));
+    const results = data.results.slice(0, 10).map((row) => ({
+      ...row,
+      image_url: row.image_url?.startsWith('data:') ? '' : row.image_url,
+      shop_image_url: row.shop_image_url?.startsWith('data:') ? '' : row.shop_image_url
+    }));
     const value = JSON.stringify({ api, location, results, has_more: Boolean(data.has_more), savedAt: now });
     if (value.length <= 500000) storage.setItem(KEY, value);
   } catch { /* Storage may be unavailable or full; discovery still works. */ }

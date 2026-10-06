@@ -1,13 +1,25 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 // Stub the database before loading the API: tests never import db.js or use .env.
 const calls = [];
+const verificationClaims = new Map();
+const loginUser = { id: 91, phone: '+919876543210', email: null, owner_name: 'Two step user', user_type: 'customer', is_admin: false, auth_version: 1, password: bcrypt.hashSync('Password123', 4) };
 const searchProducts = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, shop_id: 1, name: `Product ${index + 1}` }));
 const pool = {
   query: async (sql, values) => {
     calls.push({ sql, values });
+    if (sql === 'SELECT * FROM users WHERE phone = $1') return { rows: values[0] === loginUser.phone ? [{ ...loginUser }] : [] };
+    if (sql === 'SELECT * FROM shops WHERE user_id = $1') return { rows: [] };
+    if (sql.startsWith('DELETE FROM phone_verification_claims')) return { rows: [] };
+    if (sql.startsWith('INSERT INTO phone_verification_claims')) { verificationClaims.set(values[0], { phone: values[1], expiresAt: values[2], consumed: false }); return { rows: [] }; }
+    if (sql.startsWith('UPDATE phone_verification_claims')) {
+      const claim = verificationClaims.get(values[0]);
+      if (!claim || claim.phone !== values[1] || claim.consumed || claim.expiresAt <= new Date()) return { rows: [] };
+      claim.consumed = true; return { rows: [{ id: values[0] }] };
+    }
     if (sql.includes('SELECT auth_version FROM users')) return { rows: [{ auth_version: 1 }] };
     if (sql.includes('AS product_count')) return { rows: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `Shop ${i + 1}`, product_count: 2 })) };
     if (sql.includes('WITH ranked_products')) return { rows: searchProducts.slice(values[7], values[7] + values[6]) };
@@ -33,6 +45,9 @@ require.cache[require.resolve('../geocoder')] = { exports: {
 } };
 process.env.JWT_SECRET = 'isolated-test-secret';
 process.env.PORT = '0';
+process.env.NODE_ENV = 'test';
+process.env.PHONE_OTP_PROVIDER = 'development';
+process.env.DEVELOPMENT_OTP_CODE = '654321';
 const { app, startServer } = require('../index');
 let server, base;
 test.before(async () => {
@@ -87,6 +102,24 @@ test('health checks the database and returns an unavailable status without expos
     assert.equal(unavailable.status, 503);
     assert.deepEqual(await unavailable.json(), { status: 'unavailable' });
   } finally { pool.query = query; }
+});
+
+test('login requires password and then a single-use SMS OTP before issuing a session', async () => {
+  const first = await post('/api/auth/login', { phone: loginUser.phone, password: 'Password123' });
+  assert.equal(first.status, 200);
+  const challenge = await first.json();
+  assert.equal(challenge.requires_otp, true);
+  assert.equal(challenge.development_code, '654321');
+  assert.equal(challenge.token, undefined);
+  assert.ok(challenge.login_token);
+
+  assert.equal((await post('/api/auth/login/verify', { phone: loginUser.phone, code: '000000', login_token: challenge.login_token })).status, 400);
+  const verified = await post('/api/auth/login/verify', { phone: loginUser.phone, code: '654321', login_token: challenge.login_token });
+  assert.equal(verified.status, 200);
+  const session = await verified.json();
+  assert.equal(jwt.verify(session.token, process.env.JWT_SECRET).userId, loginUser.id);
+  assert.equal(session.user.user_type, 'customer');
+  assert.equal((await post('/api/auth/login/verify', { phone: loginUser.phone, code: '654321', login_token: challenge.login_token })).status, 403);
 });
 
 test('production cannot grant paid accounts or billing changes using client payment references', async () => {

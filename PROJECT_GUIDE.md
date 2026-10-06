@@ -2,7 +2,7 @@
 
 Referral rewards and redemption were added after the original review. See [REFERRALS.md](REFERRALS.md) for the customer/admin flow, additive tables, one-time 20% calculation, payout statuses and gateway boundary. Customer activity now includes referral wallets; admin demand operations include referral verification and redemption review.
 
-New customer and shop-owner registration also requires WhatsApp OTP verification. See [PHONE_VERIFICATION.md](PHONE_VERIFICATION.md) for the one-time token model and provider configuration.
+Customer and shop-owner signup, every login, and password recovery require SMS OTP verification. See [PHONE_VERIFICATION.md](PHONE_VERIFICATION.md) for the purpose-bound one-time token model and provider configuration.
 
 Reviewed on 2026-10-01. This guide records the current source implementation and is a starting point for future changes. Live database contents, browser behavior, deployment, and third-party service availability were not verified.
 
@@ -117,7 +117,7 @@ Run frontend/backend dev commands in their own directories. Run `npm test` at th
 1. Install each package with `npm ci` if dependencies are absent.
 2. Create a PostgreSQL database and configure backend `.env` from `.env.example`: `DB_USER`, `DB_HOST`, `DB_NAME`, `DB_PASSWORD`, `DB_PORT`, `JWT_SECRET`, optional `PORT`, `CORS_ORIGIN`, `GEOCODER_USER_AGENT`. No secret values are included in this guide.
 3. Run `npm run dev` from `backend`; this runs `node index.js`, without automatic reload. Start from this directory because dotenv uses the current directory.
-4. Configure `frontend/.env` with `VITE_API_BASE_URL=http://localhost:5000` for local development, then run `npm run dev` from `frontend`. The source default is already that URL. The example file contains a production placeholder.
+4. Optionally configure `frontend/.env` with `VITE_API_BASE_URL=http://localhost:5000` for local development, then run `npm run dev` from `frontend`. The source already defaults to that URL in development. Leave it unset for the supplied same-origin production deployment.
 5. For local CORS, omit `CORS_ORIGIN` in nonproduction or configure the exact frontend origin. Production defaults to disallowing cross-origin access unless origins are supplied.
 
 Checks performed during review:

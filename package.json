@@ -4,8 +4,6 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "share:test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/share-test.ps1",
-    "share:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/share-test.ps1 -Stop",
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
     "start": "npm --prefix backend start",

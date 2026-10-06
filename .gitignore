@@ -7,4 +7,3 @@ dist/
 backend/uploads/
 backups/
 *.dump
-.test-share/

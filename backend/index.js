@@ -9,7 +9,7 @@ const { geocode, searchPlaces } = require('./geocoder');
 const { withAccountValidation } = require('./middleware/auth');
 const { validateProduction, trustProxy } = require('./production');
 const { attachReferral, mountReferrals } = require('./referrals');
-const { normalizePhone, isValidPhone, consumeVerificationToken, mountPhoneVerification } = require('./phoneVerification');
+const { normalizePhone, isValidPhone, startVerification, checkVerification, consumeVerificationToken, issueLoginVerificationToken, consumeLoginVerificationToken, mountPhoneVerification } = require('./phoneVerification');
 const { mountAnalytics } = require('./analytics');
 const { mountAdminManagement } = require('./adminManagement');
 const { mountAccount } = require('./account');
@@ -376,23 +376,48 @@ app.post('/api/auth/login', async (req, res) => {
       await pool.query('UPDATE users SET password = $1 WHERE id = $2', [await bcrypt.hash(password, 12), user.id]);
     }
 
+    const verification = await startVerification(phone);
+    const claim = await issueLoginVerificationToken(pool, phone);
+    return res.set('Cache-Control', 'no-store').json({
+      message: 'Password accepted. Enter the SMS code to finish signing in.',
+      requires_otp: true,
+      login_token: claim.token,
+      expires_at: claim.expiresAt.toISOString(),
+      ...(verification.developmentCode ? { development_code: verification.developmentCode } : {})
+    });
+
+  } catch (err) {
+    console.error('Login Error:', err);
+    return res.status(500).json({ error: 'Server error during login.' });
+  }
+});
+
+app.post('/api/auth/login/verify', async (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const code = String(req.body?.code || '').trim();
+  if (!isValidPhone(phone) || !/^\d{4,10}$/.test(code) || !req.body?.login_token) return res.status(400).json({ error: 'Phone number, login verification and SMS code are required.' });
+  try {
+    if (!(await checkVerification(phone, code))) return res.status(400).json({ error: 'The SMS code is incorrect or expired.' });
+    await consumeLoginVerificationToken(pool, req.body.login_token, phone);
+    const userRes = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
+    if (!userRes.rows.length) return res.status(401).json({ error: 'Account is no longer available.' });
+    const user = userRes.rows[0];
     const shopRes = await pool.query('SELECT * FROM shops WHERE user_id = $1', [user.id]);
     const shop = shopRes.rows[0] || null;
     if (shop && user.user_type !== 'shop_owner') {
       user.user_type = 'shop_owner';
       await pool.query("UPDATE users SET user_type = 'shop_owner' WHERE id = $1", [user.id]);
     }
-
-    return res.json({
+    return res.set('Cache-Control', 'no-store').json({
       message: 'Login successful!',
       token: createToken(user),
       user: { id: user.id, phone: user.phone, email: user.email, owner_name: user.owner_name, user_type: user.user_type || (shop ? 'shop_owner' : 'customer'), is_admin: user.is_admin },
-      shop: shop
+      shop
     });
-
   } catch (err) {
-    console.error('Login Error:', err);
-    return res.status(500).json({ error: 'Server error during login.' });
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('Login verification error:', err);
+    return res.status(500).json({ error: 'Unable to verify this login.' });
   }
 });
 
@@ -403,7 +428,7 @@ app.get('/api/shops/catalogs', async (req, res) => {
   const page = Number(req.query.page || 1);
   if (!Number.isSafeInteger(page) || page < 1 || page > 100000) return res.status(400).json({ error: 'Invalid page.' });
   try {
-    const result = await pool.query(`SELECT s.id,s.name,s.category,s.address,s.city,s.is_verified,
+    const result = await pool.query(`SELECT s.id,s.name,s.category,s.address,s.city,s.image_url,s.is_verified,
       (SELECT COUNT(*)::int FROM products p WHERE p.shop_id=s.id) AS product_count
       FROM shops s ORDER BY s.name,s.id LIMIT 25 OFFSET $1`, [(page - 1) * 24]);
     return res.json({ shops: result.rows.slice(0, 24), has_more: result.rows.length > 24 });
@@ -435,7 +460,7 @@ app.get('/api/shops/:shopId/portfolio', async (req, res) => {
   try {
     const [shopResult, productsResult] = await Promise.all([
       pool.query(
-        `SELECT s.id, s.name, s.category, s.address, s.city, s.latitude, s.longitude,
+        `SELECT s.id, s.name, s.category, s.address, s.city, s.image_url, s.latitude, s.longitude,
                 s.google_map_link, s.phone, s.whatsapp_number, s.opening_hours,
                 s.opening_time, s.closing_time, s.is_open, s.is_verified,
                 COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM shop_reviews WHERE shop_id = s.id), 0) AS average_rating,
@@ -570,13 +595,15 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
 // ==========================================
 app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
-  const { name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time } = req.body;
+  const { name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, image_url, opening_hours, opening_time, closing_time } = req.body;
   const { city } = req.body;
   if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
 
   if (!shopId || !name?.trim() || !category) {
     return res.status(400).json({ error: 'Shop name and category are required.' });
   }
+  if (image_url != null && typeof image_url !== 'string') return res.status(400).json({ error: 'Shop image must be a valid image.' });
+  if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Shop image is too large. Please upload an optimized image under 1.2 MB.' });
   if (
     (latitude !== '' && latitude !== undefined && !Number.isFinite(Number(latitude))) ||
     (longitude !== '' && longitude !== undefined && !Number.isFinite(Number(longitude)))
@@ -600,9 +627,10 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
            opening_hours = COALESCE($9, opening_hours),
            opening_time = $10,
            closing_time = $11,
-           city = CASE WHEN $13::boolean THEN $14::varchar ELSE city END,
+           image_url = CASE WHEN $12::boolean THEN $13::text ELSE image_url END,
+           city = CASE WHEN $15::boolean THEN $16::varchar ELSE city END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $12
+       WHERE id = $14
        RETURNING *`,
       [
         name.trim(),
@@ -616,6 +644,8 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
         opening_hours?.trim() || null,
         opening_time || null,
         closing_time || null,
+        Object.hasOwn(req.body, 'image_url'),
+        image_url?.trim() || null,
         shopId,
         Object.hasOwn(req.body, 'city'),
         city?.trim() || null
@@ -997,7 +1027,7 @@ app.get('/api/search/products', async (req, res) => {
           SELECT
             p.id, p.name, p.description, p.brand, p.price, p.image_url,
             p.availability_status, p.availability_updated_at, p.updated_at AS catalog_updated_at,
-            s.id AS shop_id, s.name AS shop_name, s.category AS shop_category,
+            s.id AS shop_id, s.name AS shop_name, s.category AS shop_category, s.image_url AS shop_image_url,
             s.address, s.latitude, s.longitude, s.google_map_link,
             s.phone, s.whatsapp_number, s.opening_hours, s.is_open, s.open_status_updated_at,
             s.is_verified, s.verified_at,
@@ -1254,6 +1284,7 @@ const handleExploreOrNearby = async (req, res) => {
         s.address,
         s.phone,
         s.whatsapp_number,
+        s.image_url AS shop_image_url,
         s.opening_hours,
         s.is_open,
         s.open_status_updated_at,
@@ -1289,6 +1320,7 @@ const handleExploreOrNearby = async (req, res) => {
           address: row.address,
           phone: row.phone,
           whatsapp_number: row.whatsapp_number,
+          image_url: row.shop_image_url,
           opening_hours: row.opening_hours,
           is_open: row.is_open,
           open_status_updated_at: row.open_status_updated_at,

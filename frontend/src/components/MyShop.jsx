@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 import { referralFromSearch } from '../referrals.mjs';
 import PhoneVerification from './PhoneVerification';
+import ForgotPassword from './ForgotPassword';
+import LoginVerification from './LoginVerification';
 import ShopShare from './ShopShare';
+import ShopImage from './ShopImage';
 import IndianPhoneInput from './IndianPhoneInput';
 import { indianPhoneE164 } from '../phone.mjs';
 
@@ -119,6 +122,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [resetNotice, setResetNotice] = useState('');
+  const [accountPassword, setAccountPassword] = useState({ current_password: '', new_password: '', confirm_password: '' });
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [loginChallenge, setLoginChallenge] = useState(null);
   const [insights, setInsights] = useState(null);
   const [insightsPeriod, setInsightsPeriod] = useState('total');
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -126,6 +133,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [fetchingProducts, setFetchingProducts] = useState(false);
   const [fetchingLoc, setFetchingLoc] = useState(false);
   const [imageUploadMessage, setImageUploadMessage] = useState('');
+  const [shopImageUploadMessage, setShopImageUploadMessage] = useState('');
   const [shopOffers, setShopOffers] = useState([]);
   const [offerForm, setOfferForm] = useState({ title: '', discount_text: '', description: '', valid_until: '' });
   const [editingOffer, setEditingOffer] = useState(null);
@@ -160,7 +168,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [editingShop, setEditingShop] = useState(false);
   const [dashboardSection, setDashboardSection] = useState('catalog');
   const [bulkMessage, setBulkMessage] = useState('');
-  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', city: '', phone: '', whatsapp_number: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
+  const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', city: '', phone: '', whatsapp_number: '', image_url: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
   const [autoOpen, setAutoOpen] = useState(shopData?.is_open !== false);
 
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
@@ -292,6 +300,21 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     }
   };
 
+  const handleShopImageUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setShopImageUploadMessage('Optimizing shop image…');
+    try {
+      const { dataUrl, sizeKb } = await optimiseProductImage(file);
+      setShopForm((current) => ({ ...current, image_url: dataUrl }));
+      setShopImageUploadMessage(`Optimized to ${sizeKb} KB and ready to save.`);
+    } catch (error) {
+      setShopImageUploadMessage(error.message);
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const handleBulkFile = (event) => {
     const file = event.target.files?.[0];
     if (!file || !shopData?.id) return;
@@ -354,6 +377,12 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
       if (!res.ok) throw new Error(data.error || 'Login failed');
 
+      if (data.requires_otp) {
+        setLoginChallenge(data);
+        setViewMode('login_otp');
+        return;
+      }
+
       if (typeof onLoginSuccess === 'function') {
         onLoginSuccess({ token: data.token, user: data.user, shop: data.shop });
       }
@@ -364,6 +393,21 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAccountPasswordChange = async (event) => {
+    event.preventDefault();
+    setPasswordError('');
+    if (accountPassword.new_password !== accountPassword.confirm_password) return setPasswordError('New passwords do not match.');
+    setPasswordBusy(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/account/password`, { method: 'POST', headers: authenticatedJsonHeaders(), body: JSON.stringify(accountPassword) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to change password.');
+      window.alert(data.message);
+      onLogout?.();
+    } catch (error) { setPasswordError(error.message); }
+    finally { setPasswordBusy(false); }
   };
 
   const handleRegisterSubmit = async (planId, paymentId = null) => {
@@ -600,6 +644,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   const openShopEditor = () => {
+    setShopImageUploadMessage('');
     setShopForm({
       city: shopData?.city || '',
       name: shopData?.name || shopData?.shop_name || '',
@@ -607,6 +652,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       address: shopData?.address || '',
       phone: shopData?.phone || '',
       whatsapp_number: shopData?.whatsapp_number || '',
+      image_url: shopData?.image_url || '',
       opening_hours: shopData?.opening_hours || '',
       opening_time: shopData?.opening_time ? String(shopData.opening_time).slice(0, 5) : '',
       closing_time: shopData?.closing_time ? String(shopData.closing_time).slice(0, 5) : '',
@@ -659,6 +705,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     );
   }
 
+  if (!session?.token && viewMode === 'forgot') {
+    return <div className="mx-auto my-12 max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"><ForgotPassword initialPhone={loginData.phone} onBack={() => setViewMode('login')} onComplete={(phone) => { setLoginData({ phone, password: '' }); setResetNotice('Password reset successfully. Sign in with your new password.'); setViewMode('login'); }} /></div>;
+  }
+
+  if (!session?.token && viewMode === 'login_otp' && loginChallenge) {
+    return <div className="mx-auto my-12 max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"><LoginVerification phone={indianPhoneE164(loginData.phone)} challenge={loginChallenge} onBack={() => { setLoginChallenge(null); setViewMode('login'); }} onVerified={(data) => { onLoginSuccess?.({ token: data.token, user: data.user, shop: data.shop }); setShopData(data.shop); setViewMode('dashboard'); }} /></div>;
+  }
+
   if (!session?.token && viewMode === 'login') {
     return (
       <div className="max-w-md mx-auto my-12 p-8 bg-white border border-slate-200 rounded-2xl shadow-sm font-sans">
@@ -677,7 +731,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
             <div className="relative"><input type={showLoginPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Password" value={loginData.password} onChange={(e) => setLoginData({ ...loginData, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} aria-label={showLoginPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
           </div>
-          <button type="button" onClick={() => setResetNotice('Password reset through phone OTP will be available soon. Until then, please contact support to recover your account.')} className="-mt-1 text-left text-xs font-semibold text-emerald-700 hover:underline">Forgot password?</button>
+          <button type="button" onClick={() => { setErrorMsg(''); setResetNotice(''); setViewMode('forgot'); }} className="-mt-1 text-left text-xs font-semibold text-emerald-700 hover:underline">Forgot password?</button>
           <button type="submit" disabled={loading} className="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-2">
             {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Signing in...</> : 'Sign In'}
           </button>
@@ -803,6 +857,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 ['offers', 'Offers', Tag],
                 ...(hasShopInsights ? [['insights', 'Customer activity', BarChart3]] : []),
                 ['billing', 'Billing', CalendarDays],
+                ['security', 'Account security', KeyRound],
               ].map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
                 'flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition lg:w-full ' + (dashboardSection === id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800')
               }><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></button>)}
@@ -814,7 +869,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
       {/* Dashboard Banner */}
       <div className="bg-slate-900 text-white rounded-2xl p-5 sm:p-6 mb-6 flex flex-col gap-5 lg:flex-row lg:justify-between lg:items-center shadow-md">
-        <div>
+        <div className="flex min-w-0 items-center gap-4">
+          <ShopImage shop={shopData} className="h-16 w-16 shrink-0 rounded-2xl object-cover ring-2 ring-white/15 sm:h-20 sm:w-20" />
+          <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs uppercase tracking-wider font-semibold text-emerald-400 mb-1">
             <Store className="w-3.5 h-3.5" />
             <span>Shop Dashboard</span>
@@ -831,6 +888,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <p className="text-xs text-slate-400 mt-1">
             Plan: <span className="text-emerald-400 font-bold uppercase">{shopData?.subscription_plan || 'Free'}</span> ({products.length} / {maxProductsAllowed >= 9999 ? '∞' : maxProductsAllowed} Products)
           </p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {shopData?.subscription_plan !== 'enterprise' && <button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">Upgrade plan</button>}
@@ -869,6 +927,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       {dashboardSection === 'billing' && <div className="mb-4 rounded-xl border border-emerald-200 bg-white p-4 text-sm text-slate-600"><p>Basic: <strong>₹120 upfront for 6 months</strong> (₹20/month). Upgrade anytime; keep the same login.</p>{shopData?.subscription_ends_at && <p className="mt-2">Current term ends: <strong>{new Date(shopData.subscription_ends_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong></p>}<p className="mt-2 text-xs">A plan switch starts a new paid term immediately. Remaining time is not transferred to the new plan.</p></div>}
       {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p><button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
 
+      {dashboardSection === 'security' && <section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><form onSubmit={handleAccountPasswordChange} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><KeyRound className="h-6 w-6 text-emerald-700" /><h2 className="mt-3 text-xl font-black text-slate-900">Change account password</h2><p className="mt-1 text-sm leading-6 text-slate-500">Use the shop owner account’s current password. A successful change signs out every device.</p>{passwordError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{passwordError}</p>}<label className="mt-5 block text-xs font-bold text-slate-600">Current password<input required type="password" autoComplete="current-password" value={accountPassword.current_password} onChange={(event) => setAccountPassword({ ...accountPassword, current_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">New password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.new_password} onChange={(event) => setAccountPassword({ ...accountPassword, new_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">Confirm new password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.confirm_password} onChange={(event) => setAccountPassword({ ...accountPassword, confirm_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><p className="mt-3 text-xs text-slate-500">Use at least 10 characters with a letter and number.</p><button disabled={passwordBusy} className="mt-5 flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{passwordBusy && <Loader2 className="h-4 w-4 animate-spin" />}{passwordBusy ? 'Updating…' : 'Update password'}</button></form><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ SMS OTP at every login</li><li>✓ SMS OTP password recovery</li><li>✓ Secure password hashing</li><li>✓ One-time verification tokens</li><li>✓ All sessions revoked after a reset</li></ul><p className="mt-5 text-xs leading-5 text-emerald-800">If you cannot remember the current password, sign out and choose <strong>Forgot password?</strong> on the login screen.</p></aside></section>}
+
       {hasShopInsights && dashboardSection === 'insights' && <section className="mb-6 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><BarChart3 className="h-5 w-5 text-violet-600" /> Shop insights</h2><p className="mt-1 text-sm text-slate-600">{insightsPeriod === 'monthly' ? 'This month’s' : 'All-time'} activity from signed-in customers who engage with your shop.</p></div><div className="flex items-center gap-2"><div className="rounded-xl border border-violet-200 bg-white p-1"><button type="button" onClick={() => setInsightsPeriod('monthly')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'monthly' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>This month</button><button type="button" onClick={() => setInsightsPeriod('total')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'total' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>Total</button></div><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">Pro feature</span></div></div>{insightsLoading ? <div className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading insights…</div> : insightsError ? <p className="mt-4 text-sm text-rose-600">{insightsError}</p> : <><div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5"><div className="rounded-xl border border-violet-100 bg-white p-4"><Eye className="h-4 w-4 text-violet-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.views || 0}</p><p className="text-xs font-semibold text-slate-500">Catalog views</p><p className="mt-1 text-[11px] text-slate-400">{insights?.unique_viewers || 0} unique visitors</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><Navigation className="h-4 w-4 text-emerald-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.directions || 0}</p><p className="text-xs font-semibold text-slate-500">Directions</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><PhoneCall className="h-4 w-4 text-sky-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.calls || 0}</p><p className="text-xs font-semibold text-slate-500">Calls</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><MessageCircle className="h-4 w-4 text-emerald-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.whatsapp_messages || 0}</p><p className="text-xs font-semibold text-slate-500">WhatsApp chats</p></div><div className="rounded-xl border border-violet-200 bg-violet-600 p-4 text-white"><BarChart3 className="h-4 w-4 text-violet-100" /><p className="mt-3 text-2xl font-extrabold">{insights?.total_interactions || 0}</p><p className="text-xs font-semibold text-violet-100">Total interactions</p></div></div><p className="mt-3 text-[11px] text-slate-500">Interactions include catalog views, calls, directions, WhatsApp chats, and reviews. Personal customer details are never shown.</p></>}</section>}
 
       {dashboardSection === 'offers' && <section className="mb-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
@@ -893,6 +953,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 text-emerald-600" /> Edit shop details</h3><button onClick={() => setEditingShop(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button></div>
             <form onSubmit={handleUpdateShop} className="space-y-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center gap-4"><ShopImage shop={shopForm} className="h-24 w-24 shrink-0 rounded-2xl border border-slate-200 object-cover" /><div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-800">Shop image</p><p className="mt-1 text-xs leading-5 text-slate-500">JPG, PNG or WebP. The image is optimized before saving.</p><div className="mt-3 flex flex-wrap gap-2"><label className="cursor-pointer rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><Upload className="mr-1 inline h-3.5 w-3.5" />Choose image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleShopImageUpload} className="hidden" /></label>{shopForm.image_url && <button type="button" onClick={() => { setShopForm({ ...shopForm, image_url: '' }); setShopImageUploadMessage('Image removed. Save details to apply.'); }} className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700">Remove</button>}</div></div></div>{shopImageUploadMessage && <p className="mt-3 text-xs font-medium text-slate-600">{shopImageUploadMessage}</p>}</div>
               <input required value={shopForm.name} onChange={(e) => setShopForm({ ...shopForm, name: e.target.value })} placeholder="Shop name" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="e.g. Chennai" value={shopForm.city} onChange={e => setShopForm({ ...shopForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
               <select required value={shopForm.category} onChange={(e) => setShopForm({ ...shopForm, category: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><option value="" disabled>Select category</option>{SHOP_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>

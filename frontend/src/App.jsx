@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { getRole, homeTab, resolveTab } from './session.mjs';
 import Navbar from './components/Navbar';
 import NearbySearch from './components/NearbySearch';
@@ -12,11 +12,12 @@ import CustomerAuth from './components/CustomerAuth';
 import UserActivity from './components/UserActivity';
 import ShopPortfolio from './components/ShopPortfolio';
 import ShopDirectory from './components/ShopDirectory';
-import PricingPage from './components/PricingPage';
 import Offers from './components/Offers';
 import { referralFromSearch } from './referrals.mjs';
 import { trackPageVisit } from './analytics.mjs';
 import { shopIdFromSearch } from './shopLinks.mjs';
+
+const PricingPage = lazy(() => import('./components/PricingPage'));
 
 export default function App() {
   // Resolve the requested page against the current account's access.
@@ -25,6 +26,7 @@ export default function App() {
     const id = shopIdFromSearch(window.location.search);
     return id ? { id } : null;
   });
+  const [postLoginTab, setPostLoginTab] = useState(null);
   
   const [session, setSession] = useState(() => {
     try {
@@ -38,7 +40,8 @@ export default function App() {
   const handleLoginSuccess = (sessionData) => {
     localStorage.setItem('hyperlocal-session', JSON.stringify(sessionData));
     setSession(sessionData);
-    setActiveTab(homeTab(sessionData));
+    setActiveTab(postLoginTab || homeTab(sessionData));
+    setPostLoginTab(null);
   };
 
   const handleLogout = () => {
@@ -64,7 +67,7 @@ export default function App() {
         session={session}
         role={role}
         onLogout={handleLogout}
-        onCustomerAuth={() => setActiveTab('customer-auth')}
+        onCustomerAuth={() => { setPostLoginTab(null); setActiveTab('customer-auth'); }}
       />
 
       {/* Dynamic Content based on activeTab */}
@@ -74,9 +77,9 @@ export default function App() {
 
         {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers />}
 
-        {activeTab === 'shop-portfolio' && portfolioShop && <ShopPortfolio session={session} key={portfolioShop.id} shopId={portfolioShop.id} initialShop={portfolioShop} backLabel={role === 'shop_owner' || role === 'admin' ? 'Back to dashboard' : 'Back to nearby shops'} onBack={() => setActiveTab(homeTab(session))} />}
+        {activeTab === 'shop-portfolio' && portfolioShop && <ShopPortfolio session={session} key={portfolioShop.id} shopId={portfolioShop.id} initialShop={portfolioShop} backLabel={role === 'shop_owner' || role === 'admin' ? 'Back to dashboard' : 'Back to nearby shops'} onBack={() => setActiveTab(homeTab(session))} onRequireLogin={() => { setPostLoginTab('shop-portfolio'); setActiveTab('customer-auth'); }} />}
 
-        {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={handleLoginSuccess} onChooseShop={() => setActiveTab('my-shop')} onBack={() => setActiveTab('explore')} />}
+        {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={handleLoginSuccess} onChooseShop={() => setActiveTab('my-shop')} onBack={() => { setActiveTab(postLoginTab || 'explore'); setPostLoginTab(null); }} />}
 
         {activeTab === 'activity' && role === 'customer' && <UserActivity session={session} onLogout={handleLogout} onSessionUpdate={handleSessionUpdate} />}
         
@@ -99,7 +102,7 @@ export default function App() {
 
         {activeTab === 'demand' && role === 'admin' && <AdminDashboard session={session} />}
 
-        {activeTab === 'pricing' && <PricingPage onBack={() => setActiveTab(role === 'shop_owner' ? 'my-shop' : 'explore')} onStart={() => setActiveTab('my-shop')} />}
+        {activeTab === 'pricing' && <Suspense fallback={<div className="mx-auto max-w-7xl px-5 py-20 text-center text-sm font-semibold text-slate-500">Loading pricing plans…</div>}><PricingPage onBack={() => setActiveTab(role === 'shop_owner' ? 'my-shop' : 'explore')} onStart={() => setActiveTab('my-shop')} /></Suspense>}
       </main>
 
       {/* Common Footer Component with setActiveTab prop */}

@@ -5,6 +5,7 @@ import ProductSkeleton from './ProductSkeleton';
 import DistanceSelector from './DistanceSelector';
 import { readDiscoveryCache, writeDiscoveryCache, discoveryKey } from '../discoveryCache.mjs';
 import { API_BASE_URL } from '../config';
+import ShopImage from './ShopImage';
 
 // Instagram Story Style Categories Data
 const CATEGORIES = [
@@ -146,7 +147,7 @@ const mapDiscoveryResults = (results) => {
       lat: Number.isFinite(Number(product.latitude)) ? Number(product.latitude) : null,
       lng: Number.isFinite(Number(product.longitude)) ? Number(product.longitude) : null,
       backendDistance: Number.isFinite(distance) ? distance : null,
-      image_url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=300',
+      image_url: product.shop_image_url || '',
       total_products: 0
     };
     const currentShop = uniqueShops.get(shop.id);
@@ -844,16 +845,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                     >
                       <div>
                         {/* Shop Image */}
-                        <img
-                          src={shop.image_url}
-                          alt={shop.name || 'Shop'}
-                          loading="lazy"
-                          decoding="async"
-                          className="mb-3 h-44 w-full rounded-2xl object-cover transition duration-500 group-hover:scale-[1.02]"
-                          onError={(e) => {
-                            e.target.src = 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=300';
-                          }}
-                        />
+                        <ShopImage shop={shop} className="mb-3 h-44 w-full rounded-2xl object-cover transition duration-500 group-hover:scale-[1.02]" />
 
                         {/* Shop Title */}
                         <div className="flex items-start justify-between gap-2">
