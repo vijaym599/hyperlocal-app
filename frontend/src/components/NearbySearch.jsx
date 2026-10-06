@@ -142,6 +142,7 @@ const mapDiscoveryResults = (results) => {
       opening_hours: product.opening_hours || null,
       is_open: Boolean(product.is_open),
       is_verified: Boolean(product.is_verified),
+      subscription_active: product.subscription_active !== false,
       average_rating: Number(product.shop_average_rating || 0),
       review_count: Number(product.shop_review_count || 0),
       lat: Number.isFinite(Number(product.latitude)) ? Number(product.latitude) : null,
@@ -164,6 +165,7 @@ const mapDiscoveryResults = (results) => {
       shop_whatsapp_number: shop.whatsapp_number,
       shop_is_open: shop.is_open,
       shop_is_verified: shop.is_verified,
+      subscription_active: shop.subscription_active,
       category,
       backendDistance: shop.backendDistance
     };
@@ -537,7 +539,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       const distKm = getItemDistanceKm(p.shop_lat, p.shop_lng, p.backendDistance);
       return { ...p, calculatedDistKm: distKm };
     })
-    .sort((a, b) => a.calculatedDistKm - b.calculatedDistKm); // Shortest distance first
+    .sort((a, b) => Number(b.subscription_active) - Number(a.subscription_active) || a.calculatedDistKm - b.calculatedDistKm); // Active subscriptions first, then nearest
 
   // 5. Shops: Filter & Sort by Distance (Nearest First)
   const processedShops = shops
@@ -550,7 +552,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       const distKm = getItemDistanceKm(s.lat, s.lng, s.backendDistance);
       return { ...s, calculatedDistKm: distKm };
     })
-    .sort((a, b) => a.calculatedDistKm - b.calculatedDistKm); // Shortest distance first
+    .sort((a, b) => Number(b.subscription_active) - Number(a.subscription_active) || a.calculatedDistKm - b.calculatedDistKm); // Active subscriptions first, then nearest
 
   const shopPageCount = Math.max(1, Math.ceil(processedShops.length / PAGE_SIZE));
   const currentShopPage = Math.min(shopPage, shopPageCount);

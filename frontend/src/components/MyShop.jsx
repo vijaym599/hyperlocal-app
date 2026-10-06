@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, BadgeCheck, BarChart3, CalendarDays, Eye, EyeOff, KeyRound, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, KeyRound, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 import { referralFromSearch } from '../referrals.mjs';
@@ -104,6 +104,20 @@ const fetchShopOffers = async (shopId, token) => {
   return data.offers || [];
 };
 
+const fetchShopNotifications = async (shopId, token, signal) => {
+  const response = await fetch(`${API_BASE_URL}/api/shops/${shopId}/notifications`, { headers: { Authorization: `Bearer ${token}` }, signal });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to load notifications.');
+  return data.notifications || [];
+};
+
+const fetchSubscriptionQueue = async (shopId, token, signal) => {
+  const response = await fetch(`${API_BASE_URL}/api/shops/${shopId}/subscription-queue`, { headers: { Authorization: `Bearer ${token}` }, signal });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to load subscription queue.');
+  return data.subscriptions || [];
+};
+
 const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : referralFromSearch(window.location.search) ? 'register_wizard' : 'choice');
   const [wizardStep, setWizardStep] = useState(1);
@@ -140,6 +154,13 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [offerMessage, setOfferMessage] = useState('');
   const [offersLoading, setOffersLoading] = useState(false);
   const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
+  const [shopNotifications, setShopNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState('');
+  const [subscriptionQueue, setSubscriptionQueue] = useState([]);
+  const [activatingQueueId, setActivatingQueueId] = useState(null);
+  const [subscriptionPromotion, setSubscriptionPromotion] = useState(null);
+  const [subscriptionClock, setSubscriptionClock] = useState(() => Date.now());
 
   // REGISTRATION FORM WITH CATEGORY
   const [regForm, setRegForm] = useState({
@@ -174,7 +195,12 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
   const maxProductsAllowed = activePlanDetails.limit;
   const hasShopInsights = INSIGHT_PLANS.has(shopData?.subscription_plan);
-  const currentDate = new Date();
+  const currentDate = new Date(subscriptionClock);
+  const subscriptionEnd = shopData?.subscription_ends_at ? new Date(shopData.subscription_ends_at) : null;
+  const subscriptionDaysLeft = subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) ? Math.ceil((subscriptionEnd.getTime() - currentDate.getTime()) / 86400000) : null;
+  const subscriptionIsActive = Boolean(subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) && subscriptionEnd.getTime() > currentDate.getTime());
+  const subscriptionNeedsAttention = subscriptionDaysLeft == null || subscriptionDaysLeft <= 30 || shopData?.subscription_status === 'cancelled';
+  const promotionApplies = (planId) => subscriptionPromotion?.eligible_plans?.includes(planId) && Number(subscriptionPromotion.purchase_months) === (planId === 'basic' ? 6 : 1);
   const todayIso = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
   const stockCounts = useMemo(() => products.reduce((counts, p) => {
     const status = p.availability_status || 'available';
@@ -194,6 +220,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   });
 
   useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${API_BASE_URL}/api/subscriptions/promotion`, { signal: controller.signal, cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() : { promotion: null })
+      .then((data) => setSubscriptionPromotion(data.promotion || null))
+      .catch((error) => { if (error.name !== 'AbortError') setSubscriptionPromotion(null); });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     if (!shopData?.id) return undefined;
     const controller = new AbortController();
     const sync = async () => {
@@ -204,7 +239,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         setAutoOpen(data.shop.is_open !== false);
       } catch (error) {
         if (error.name !== 'AbortError') console.error('Shop status refresh failed:', error);
-      }
+      } finally { if (!controller.signal.aborted) setSubscriptionClock(Date.now()); }
     };
     void sync();
     const timer = window.setInterval(sync, 60000);
@@ -233,6 +268,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const updateSubscription = async (action, plan = null) => {
     if (!shopData?.id) return;
     if (action === 'change' && !window.confirm(`Switch to ${plan}? ${plan === 'basic' ? '₹120 for 6 months' : `₹${SUBSCRIPTION_PLANS.find(item => item.id === plan)?.price} for 1 month`}. The new plan starts immediately; remaining time on your current plan is not transferred.`)) return;
+    if (action === 'renew' && !window.confirm(`Renew the ${plan} plan? The new term will be added after the current end date.`)) return;
     if (action === 'cancel' && !window.confirm('Cancel automatic renewal? Your current plan stays active until its billing period ends.')) return;
     setLoading(true);
     try {
@@ -240,9 +276,45 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update subscription.');
       setShopData(data.shop);
+      if (data.queued_subscription) {
+        setSubscriptionQueue((items) => [...items, data.queued_subscription]);
+        alert(data.message);
+      }
       const updatedSession = { ...session, shop: data.shop };
       localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession)); onLoginSuccess?.(updatedSession);
     } catch (error) { alert(error.message); } finally { setLoading(false); }
+  };
+
+  const activateQueuedSubscription = async (queued) => {
+    if (!shopData?.id || !window.confirm(`Activate the queued ${queued.plan} plan now? Your current plan's remaining days will be replaced.`)) return;
+    setActivatingQueueId(queued.id);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/subscription-queue/${queued.id}/activate`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}` } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to activate queued plan.');
+      setShopData(data.shop);
+      setSubscriptionQueue((items) => items.map((item) => item.id === queued.id ? { ...item, status: 'activated', activated_at: new Date().toISOString() } : item));
+      const updatedSession = { ...session, shop: data.shop };
+      localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession));
+      onLoginSuccess?.(updatedSession);
+    } catch (error) { alert(error.message); }
+    finally { setActivatingQueueId(null); }
+  };
+
+  const markNotificationsRead = async () => {
+    if (!shopData?.id || !session?.token) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/notifications/read`, { method: 'PATCH', headers: { Authorization: `Bearer ${session.token}` } });
+      if (response.ok) setShopNotifications((items) => items.map((item) => ({ ...item, read_at: item.read_at || new Date().toISOString() })));
+    } catch (error) { console.error('Notification update failed:', error); }
+  };
+
+  const refreshNotifications = async () => {
+    if (!shopData?.id || !session?.token) return;
+    setNotificationsLoading(true); setNotificationsError('');
+    try { setShopNotifications(await fetchShopNotifications(shopData.id, session.token)); }
+    catch (error) { setNotificationsError(error.message); }
+    finally { setNotificationsLoading(false); }
   };
 
   const fetchProductsFromBackend = async (shopId) => {
@@ -284,6 +356,24 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     });
   }, [shopData?.id, session?.token, dashboardSection]);
 
+  useEffect(() => {
+    if (!shopData?.id || !session?.token) return;
+    const controller = new AbortController();
+    fetchShopNotifications(shopData.id, session.token, controller.signal)
+      .then(setShopNotifications)
+      .catch((error) => { if (error.name !== 'AbortError') setNotificationsError(error.message); });
+    return () => controller.abort();
+  }, [shopData?.id, session?.token]);
+
+  useEffect(() => {
+    if (!shopData?.id || !session?.token) return;
+    const controller = new AbortController();
+    fetchSubscriptionQueue(shopData.id, session.token, controller.signal).then(setSubscriptionQueue).catch((error) => {
+      if (error.name !== 'AbortError') console.error('Subscription queue failed:', error);
+    });
+    return () => controller.abort();
+  }, [shopData?.id, session?.token]);
+
   const handleImageFileUpload = async (e, isEdit = false) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -316,6 +406,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   const handleBulkFile = (event) => {
+    if (!subscriptionIsActive) { setBulkMessage('Your subscription has expired. Renew the plan to import products.'); event.target.value = ''; return; }
     const file = event.target.files?.[0];
     if (!file || !shopData?.id) return;
     const reader = new FileReader();
@@ -457,6 +548,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const handleAddProduct = async (e) => {
     e.preventDefault();
 
+    if (!subscriptionIsActive) {
+      alert('Your subscription has expired. Renew the plan to add products.');
+      return;
+    }
+
     if (!shopData || !shopData.id) {
       alert("Shop session error! Please Sign Out and Sign In again.");
       return;
@@ -499,6 +595,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const handleUpdateProduct = async (e) => {
     e.preventDefault();
     if (!editingProduct || !shopData?.id) return;
+    if (!subscriptionIsActive) { alert('Your subscription has expired. Renew the plan to edit products.'); return; }
 
     setLoading(true);
     try {
@@ -539,6 +636,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const handleQuickStockUpdate = async (product, availability_status) => {
     if (product.availability_status === availability_status) return;
+    if (!subscriptionIsActive) { alert('Your subscription has expired. Renew the plan to update stock.'); return; }
     setUpdatingStockId(product.id);
     try {
       const response = await fetch(`${API_BASE_URL}/api/products/${product.id}/availability`, {
@@ -559,6 +657,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const handleCreateOffer = async (event) => {
     event.preventDefault();
     if (!shopData?.id) return;
+    if (!subscriptionIsActive) { setOfferMessage('Your subscription has expired. Renew the plan to publish offers.'); return; }
     if (offerForm.valid_until && offerForm.valid_until < todayIso) {
       setOfferMessage('Choose today or a future offer expiry date.');
       return;
@@ -578,6 +677,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const handleUpdateOffer = async (event) => {
     event.preventDefault();
     if (!editingOffer) return;
+    if (!subscriptionIsActive) { setOfferMessage('Your subscription has expired. Renew the plan to edit offers.'); return; }
     if (editingOffer.valid_until && editingOffer.valid_until < todayIso) {
       setOfferMessage('Choose today or a future offer expiry date.');
       return;
@@ -605,6 +705,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   const updateOfferStatus = async (offer, is_active) => {
+    if (!subscriptionIsActive) { setOfferMessage('Your subscription has expired. Renew the plan to manage offers.'); return; }
     setOffersLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/offers/${offer.id}`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ is_active }) });
@@ -615,6 +716,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   const deleteOffer = async (offer) => {
+    if (!subscriptionIsActive) { setOfferMessage('Your subscription has expired. Renew the plan to manage offers.'); return; }
     if (!window.confirm(`Remove “${offer.title}”?`)) return;
     setOffersLoading(true);
     try {
@@ -627,6 +729,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const handleDeleteProduct = async (product) => {
     if (!shopData?.id || !window.confirm(`Delete “${product.name}”? This cannot be undone.`)) return;
+    if (!subscriptionIsActive) { alert('Your subscription has expired. Renew the plan to manage products.'); return; }
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/products/${product.id}`, {
@@ -823,6 +926,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                     <h4 className="font-bold text-slate-800 text-lg">{plan.name}</h4>
                     <p className="text-2xl font-extrabold text-slate-900 my-2">₹{plan.id === 'basic' ? 120 : plan.price}<span className="text-xs font-normal text-slate-500"> / {plan.id === 'basic' ? '6 months' : 'month'}</span></p>
                     <p className="text-xs text-slate-500 mb-3">{plan.desc}</p>
+                    {promotionApplies(plan.id) && <p className="mb-3 rounded-lg bg-violet-100 px-2.5 py-2 text-xs font-black text-violet-800"><Gift className="mr-1 inline h-3.5 w-3.5" />Pay for {subscriptionPromotion.purchase_months} month · get {subscriptionPromotion.bonus_months} months free</p>}
                     <p className="text-xs text-slate-600 font-medium bg-slate-50 p-2 rounded-lg mb-4">
                       Limit: <strong>{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products</strong>
                     </p>
@@ -838,7 +942,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 </div>
               ))}
             </div>
-            {selectedSubscriptionPlan && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-bold text-slate-800">Selected: {selectedSubscriptionPlan.name} — ₹{selectedSubscriptionPlan.price}/month</p><p className="mt-1 text-xs text-slate-600">Basic requires a 6-month purchase. You can upgrade anytime from Billing using the same login. Cancelling renewal keeps your current term active until its end date.</p><button type="button" disabled={loading} onClick={() => handleRegisterSubmit(selectedSubscriptionPlan.id, `MOCK_PAY_${Date.now()}`)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating shop…</> : `Confirm ${selectedSubscriptionPlan.name} & create shop`}</button><p className="mt-2 text-center text-[11px] text-slate-500">Demo payment confirmation — connect a real gateway before live payments.</p></div>}
+            {selectedSubscriptionPlan && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-bold text-slate-800">Selected: {selectedSubscriptionPlan.name} — ₹{selectedSubscriptionPlan.price}/month</p>{promotionApplies(selectedSubscriptionPlan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-xs font-black text-violet-800">{subscriptionPromotion.name}: {subscriptionPromotion.bonus_months} free months will be added automatically. Offer ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>}<p className="mt-1 text-xs text-slate-600">Basic requires a 6-month purchase. You can upgrade anytime from Billing using the same login. Cancelling renewal keeps your current term active until its end date.</p><button type="button" disabled={loading} onClick={() => handleRegisterSubmit(selectedSubscriptionPlan.id, `MOCK_PAY_${Date.now()}`)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating shop…</> : `Confirm ${selectedSubscriptionPlan.name} & create shop`}</button><p className="mt-2 text-center text-[11px] text-slate-500">Demo payment confirmation — connect a real gateway before live payments.</p></div>}
           </div>
         )}
       </div>
@@ -857,6 +961,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 ['offers', 'Offers', Tag],
                 ...(hasShopInsights ? [['insights', 'Customer activity', BarChart3]] : []),
                 ['billing', 'Billing', CalendarDays],
+                ['notifications', `Notifications${shopNotifications.some((item) => !item.read_at) ? ` (${shopNotifications.filter((item) => !item.read_at).length})` : ''}`, Bell],
                 ['security', 'Account security', KeyRound],
               ].map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
                 'flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition lg:w-full ' + (dashboardSection === id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800')
@@ -923,9 +1028,19 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       </div>
       {shopData?.id && <ShopShare shop={shopData} />}
 
+      {subscriptionQueue.some((item) => item.status === 'queued') && <section className="mb-5 mt-4 rounded-2xl border border-violet-200 bg-violet-50 p-5"><div className="flex items-start gap-3"><CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-violet-700" /><div><p className="font-black text-violet-950">Purchased plans waiting for activation</p><p className="mt-1 text-sm text-violet-800">Payment is recorded, but validity has not started. Activate when you are ready.</p></div></div><div className="mt-4 space-y-3">{subscriptionQueue.filter((item) => item.status === 'queued').map((item, index) => <article key={item.id} className="rounded-2xl border border-violet-200 bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold uppercase text-slate-900">{item.plan} plan <span className="text-xs font-medium normal-case text-slate-400">· Queue #{index + 1}</span></p><p className="mt-1 text-xs text-slate-500">Payment confirmed {new Date(item.payment_confirmed_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })} · {item.term_days} days</p>{Number(item.bonus_months) > 0 && <p className="mt-1 text-xs font-bold text-violet-700"><Gift className="mr-1 inline h-3 w-3" />{item.promotion_name} · {item.bonus_months} free months included</p>}</div><button type="button" disabled={activatingQueueId === item.id || index > 0} onClick={() => activateQueuedSubscription(item)} className="rounded-xl bg-violet-700 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">{activatingQueueId === item.id ? 'Activating…' : index > 0 ? 'Waiting in queue' : 'Activate now'}</button></div></article>)}</div><p className="mt-3 text-xs text-violet-700">Activating now replaces the current active term. Later queued plans remain safely in order.</p></section>}
+
+      {dashboardSection === 'notifications' && <section className="mb-5 mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Shop inbox</p><h2 className="mt-2 flex items-center gap-2 text-2xl font-black text-slate-900"><Bell className="h-6 w-6 text-emerald-700" />Notifications</h2><p className="mt-1 text-sm text-slate-500">Information and renewal reminders sent by the administrator.</p></div><div className="flex gap-2"><button type="button" disabled={notificationsLoading} onClick={refreshNotifications} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600" aria-label="Refresh notifications"><RefreshCw className={`h-4 w-4 ${notificationsLoading ? 'animate-spin' : ''}`} /></button><button type="button" disabled={!shopNotifications.some((item) => !item.read_at)} onClick={markNotificationsRead} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Mark all as read</button></div></div>{notificationsError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{notificationsError}</p>}{notificationsLoading && !shopNotifications.length ? <p className="mt-6 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading notifications…</p> : !shopNotifications.length ? <div className="mt-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><Bell className="mx-auto h-7 w-7 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-600">No notifications yet</p><p className="mt-1 text-xs text-slate-400">Admin information will appear here.</p></div> : <div className="mt-6 space-y-3">{shopNotifications.map((item) => <article key={item.id} className={`rounded-2xl border p-4 ${item.read_at ? 'border-slate-200 bg-slate-50' : 'border-sky-200 bg-sky-50'}`}><div className="flex items-start justify-between gap-3"><div><p className="font-bold text-slate-900">{item.title}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.message}</p></div>{!item.read_at && <span className="shrink-0 rounded-full bg-sky-600 px-2 py-1 text-[10px] font-bold text-white">New</span>}</div><time className="mt-3 block text-xs text-slate-400">{new Date(item.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></article>)}</div>}</section>}
+
+      <section className={`mb-5 mt-4 rounded-2xl border p-4 ${subscriptionNeedsAttention ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3">{subscriptionNeedsAttention ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /> : <CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />}<div><p className="font-bold text-slate-900">Current plan: <span className="uppercase">{shopData?.subscription_plan || 'Basic'}</span></p><p className="mt-1 text-sm text-slate-600">{subscriptionEnd ? <>Plan ends on <strong>{subscriptionEnd.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong>{subscriptionDaysLeft <= 0 ? ' · Expired' : ` · ${subscriptionDaysLeft} days remaining`}</> : 'Plan end date is unavailable. Please renew or contact support.'}</p>{Number(shopData?.subscription_bonus_months) > 0 && <p className="mt-1 text-xs font-bold text-violet-800"><Gift className="mr-1 inline h-3.5 w-3.5" />{shopData.subscription_promotion_name || 'Promotional offer'} included {shopData.subscription_bonus_months} free months.</p>}{shopData?.subscription_status === 'cancelled' && <p className="mt-1 text-xs font-bold text-amber-800">Automatic renewal is cancelled.</p>}</div></div><div className="flex gap-2"><button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">View billing</button><button type="button" disabled={loading} onClick={() => updateSubscription('renew', shopData?.subscription_plan)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Renew plan</button></div></div></section>
+      {!subscriptionIsActive && <section className="mb-5 rounded-2xl border border-rose-300 bg-rose-50 p-4"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" /><div><p className="font-black text-rose-950">Subscription access paused</p><p className="mt-1 text-sm text-rose-800">All products are now out of stock. Product and offer management is locked until this shop renews a subscription.</p><button type="button" onClick={() => setDashboardSection('billing')} className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white">Renew subscription</button></div></div></section>}
+
+      {shopNotifications.some((item) => !item.read_at) && <section className="mb-5 rounded-2xl border border-sky-200 bg-sky-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><Bell className="mt-0.5 h-5 w-5 shrink-0 text-sky-700" /><div><p className="font-bold text-sky-950">Subscription notification</p>{shopNotifications.filter((item) => !item.read_at).slice(0, 3).map((item) => <div key={item.id} className="mt-2"><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{item.message}</p></div>)}</div></div><button type="button" onClick={markNotificationsRead} className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700">Mark as read</button></div></section>}
+
 
       {dashboardSection === 'billing' && <div className="mb-4 rounded-xl border border-emerald-200 bg-white p-4 text-sm text-slate-600"><p>Basic: <strong>₹120 upfront for 6 months</strong> (₹20/month). Upgrade anytime; keep the same login.</p>{shopData?.subscription_ends_at && <p className="mt-2">Current term ends: <strong>{new Date(shopData.subscription_ends_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong></p>}<p className="mt-2 text-xs">A plan switch starts a new paid term immediately. Remaining time is not transferred to the new plan.</p></div>}
-      {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p><button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
+      {dashboardSection === 'billing' && subscriptionPromotion && <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm font-bold text-violet-900"><Gift className="mr-2 inline h-4 w-4" />{subscriptionPromotion.name}: pay for {subscriptionPromotion.purchase_months} month and get {subscriptionPromotion.bonus_months} months free on {subscriptionPromotion.eligible_plans.map((plan) => plan.charAt(0).toUpperCase() + plan.slice(1)).join(', ')}. Ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</div>}
+      {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p>{promotionApplies(plan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-[11px] font-black text-violet-800">+ {subscriptionPromotion.bonus_months} free months</p>}<button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
 
       {dashboardSection === 'security' && <section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><form onSubmit={handleAccountPasswordChange} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><KeyRound className="h-6 w-6 text-emerald-700" /><h2 className="mt-3 text-xl font-black text-slate-900">Change account password</h2><p className="mt-1 text-sm leading-6 text-slate-500">Use the shop owner account’s current password. A successful change signs out every device.</p>{passwordError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{passwordError}</p>}<label className="mt-5 block text-xs font-bold text-slate-600">Current password<input required type="password" autoComplete="current-password" value={accountPassword.current_password} onChange={(event) => setAccountPassword({ ...accountPassword, current_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">New password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.new_password} onChange={(event) => setAccountPassword({ ...accountPassword, new_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">Confirm new password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.confirm_password} onChange={(event) => setAccountPassword({ ...accountPassword, confirm_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><p className="mt-3 text-xs text-slate-500">Use at least 10 characters with a letter and number.</p><button disabled={passwordBusy} className="mt-5 flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{passwordBusy && <Loader2 className="h-4 w-4 animate-spin" />}{passwordBusy ? 'Updating…' : 'Update password'}</button></form><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ SMS OTP at every login</li><li>✓ SMS OTP password recovery</li><li>✓ Secure password hashing</li><li>✓ One-time verification tokens</li><li>✓ All sessions revoked after a reset</li></ul><p className="mt-5 text-xs leading-5 text-emerald-800">If you cannot remember the current password, sign out and choose <strong>Forgot password?</strong> on the login screen.</p></aside></section>}
 
@@ -938,15 +1053,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <input maxLength="80" value={offerForm.discount_text} onChange={(event) => setOfferForm({ ...offerForm, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
           <textarea maxLength="500" rows="2" value={offerForm.description} onChange={(event) => setOfferForm({ ...offerForm, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm md:col-span-2" />
           <label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={offerForm.valid_until} onChange={(event) => setOfferForm({ ...offerForm, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label>
-          <button disabled={offersLoading} className="self-end rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-60">{offersLoading ? 'Saving…' : 'Publish offer'}</button>
+          <button disabled={offersLoading || !subscriptionIsActive} className="self-end rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-40">{!subscriptionIsActive ? 'Renew to publish offers' : offersLoading ? 'Saving…' : 'Publish offer'}</button>
         </form>
         {offerMessage && <p className={`mt-3 text-xs font-semibold ${offerMessage.includes('published') || offerMessage.includes('updated') ? 'text-emerald-700' : 'text-rose-600'}`}>{offerMessage}</p>}
         <div className="mt-4 space-y-2">
-          {shopOffers.length === 0 ? <p className="rounded-xl border border-dashed border-orange-200 bg-white p-4 text-sm text-slate-500">No offers yet. Add your first offer above.</p> : shopOffers.map((offer) => <div key={offer.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-white p-3"><div><p className="font-bold text-slate-800">{offer.discount_text && <span className="mr-2 rounded bg-orange-100 px-1.5 py-0.5 text-xs text-orange-700">{offer.discount_text}</span>}{offer.title}</p><p className="mt-1 text-xs text-slate-500">{offer.is_active ? 'Visible to customers' : 'Hidden'}{offer.valid_until ? ` · Valid until ${new Date(`${offer.valid_until}T00:00:00`).toLocaleDateString()}` : ''}</p></div><div className="flex gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer({ ...offer, valid_until: offer.valid_until ? String(offer.valid_until).slice(0, 10) : '' })} className="rounded-lg border border-orange-200 px-3 py-1.5 text-xs font-bold text-orange-700">Edit</button><button type="button" disabled={offersLoading} onClick={() => updateOfferStatus(offer, !offer.is_active)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700">{offer.is_active ? 'Hide' : 'Show'}</button><button type="button" disabled={offersLoading} onClick={() => deleteOffer(offer)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700">Remove</button></div></div>)}
+          {shopOffers.length === 0 ? <p className="rounded-xl border border-dashed border-orange-200 bg-white p-4 text-sm text-slate-500">No offers yet. Add your first offer above.</p> : shopOffers.map((offer) => <div key={offer.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-white p-3"><div><p className="font-bold text-slate-800">{offer.discount_text && <span className="mr-2 rounded bg-orange-100 px-1.5 py-0.5 text-xs text-orange-700">{offer.discount_text}</span>}{offer.title}</p><p className="mt-1 text-xs text-slate-500">{offer.is_active ? 'Visible to customers' : 'Hidden'}{offer.valid_until ? ` · Valid until ${new Date(`${offer.valid_until}T00:00:00`).toLocaleDateString()}` : ''}</p></div><div className="flex gap-2"><button type="button" disabled={offersLoading || !subscriptionIsActive} onClick={() => setEditingOffer({ ...offer, valid_until: offer.valid_until ? String(offer.valid_until).slice(0, 10) : '' })} className="rounded-lg border border-orange-200 px-3 py-1.5 text-xs font-bold text-orange-700 disabled:opacity-40">Edit</button><button type="button" disabled={offersLoading || !subscriptionIsActive} onClick={() => updateOfferStatus(offer, !offer.is_active)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 disabled:opacity-40">{offer.is_active ? 'Hide' : 'Show'}</button><button type="button" disabled={offersLoading || !subscriptionIsActive} onClick={() => deleteOffer(offer)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700 disabled:opacity-40">Remove</button></div></div>)}
         </div>
       </section>}
 
-      {editingOffer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"><form onSubmit={handleUpdateOffer} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Edit offer</h2><p className="mt-1 text-sm text-slate-500">Update the details customers see. Expiry can only be today or a future date.</p></div><button type="button" onClick={() => setEditingOffer(null)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 grid gap-3"><input required maxLength="120" value={editingOffer.title || ''} onChange={(event) => setEditingOffer({ ...editingOffer, title: event.target.value })} placeholder="Offer title" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><input maxLength="80" value={editingOffer.discount_text || ''} onChange={(event) => setEditingOffer({ ...editingOffer, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><textarea maxLength="500" rows="3" value={editingOffer.description || ''} onChange={(event) => setEditingOffer({ ...editingOffer, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={editingOffer.valid_until || ''} onChange={(event) => setEditingOffer({ ...editingOffer, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Cancel</button><button disabled={offersLoading} className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{offersLoading ? 'Saving…' : 'Save changes'}</button></div></form></div>}
+      {editingOffer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"><form onSubmit={handleUpdateOffer} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Edit offer</h2><p className="mt-1 text-sm text-slate-500">Update the details customers see. Expiry can only be today or a future date.</p></div><button type="button" onClick={() => setEditingOffer(null)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 grid gap-3"><input required maxLength="120" value={editingOffer.title || ''} onChange={(event) => setEditingOffer({ ...editingOffer, title: event.target.value })} placeholder="Offer title" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><input maxLength="80" value={editingOffer.discount_text || ''} onChange={(event) => setEditingOffer({ ...editingOffer, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><textarea maxLength="500" rows="3" value={editingOffer.description || ''} onChange={(event) => setEditingOffer({ ...editingOffer, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={editingOffer.valid_until || ''} onChange={(event) => setEditingOffer({ ...editingOffer, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Cancel</button><button disabled={offersLoading || !subscriptionIsActive} className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{!subscriptionIsActive ? 'Renew subscription' : offersLoading ? 'Saving…' : 'Save changes'}</button></div></form></div>}
 
       {editingShop && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
@@ -1028,10 +1143,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               )}
             </div>
 
-            <button type="submit" disabled={loading} className="w-full py-2.5 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-2">
-              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Adding Product...</> : 'Add Product'}
+            <button type="submit" disabled={loading || !subscriptionIsActive} className="w-full py-2.5 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40">
+              {!subscriptionIsActive ? 'Renew to add products' : loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Adding Product...</> : 'Add Product'}
             </button>
-            <div className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-800">Bulk upload products (CSV)</p><p className="mt-1 text-[11px] text-slate-600">Create an Excel/Google Sheet file, then download it as <strong>.csv</strong>.</p><ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-slate-600"><li>First row must contain the column titles in this order.</li><li>Each next row is one product.</li><li><strong>name</strong> and <strong>price</strong> are required; all other fields are optional.</li></ol><div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">CSV example</p><pre className="text-[10px] leading-5 text-slate-700">name,price,brand,description,availability_status,image_url{`\n`}Rice Bag,850,India Gate,5 kg basmati rice,available,{`\n`}Milk,32,Aavin,Fresh milk,low_stock,</pre></div><a download="nearbuy-products-sample.csv" href={'data:text/csv;charset=utf-8,' + encodeURIComponent('name,price,brand,description,availability_status,image_url\nRice Bag,850,India Gate,5 kg basmati rice,available,\nMilk,32,Aavin,Fresh milk,low_stock,')} className="mt-3 block text-center text-[11px] font-bold text-emerald-700 hover:underline">Download sample CSV</a><label className="mt-2 flex cursor-pointer items-center justify-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-bold text-emerald-700"><Upload className="h-3.5 w-3.5" />Choose CSV file<input type="file" accept=".csv,text/csv" onChange={handleBulkFile} className="hidden" /></label>{bulkMessage && <p className="mt-2 text-[11px] font-medium text-slate-600">{bulkMessage}</p>}</div>
+            <div className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-800">Bulk upload products (CSV)</p><p className="mt-1 text-[11px] text-slate-600">Create an Excel/Google Sheet file, then download it as <strong>.csv</strong>.</p><ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-slate-600"><li>First row must contain the column titles in this order.</li><li>Each next row is one product.</li><li><strong>name</strong> and <strong>price</strong> are required; all other fields are optional.</li></ol><div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">CSV example</p><pre className="text-[10px] leading-5 text-slate-700">name,price,brand,description,availability_status,image_url{`\n`}Rice Bag,850,India Gate,5 kg basmati rice,available,{`\n`}Milk,32,Aavin,Fresh milk,low_stock,</pre></div><a download="nearbuy-products-sample.csv" href={'data:text/csv;charset=utf-8,' + encodeURIComponent('name,price,brand,description,availability_status,image_url\nRice Bag,850,India Gate,5 kg basmati rice,available,\nMilk,32,Aavin,Fresh milk,low_stock,')} className="mt-3 block text-center text-[11px] font-bold text-emerald-700 hover:underline">Download sample CSV</a><label className={`mt-2 flex items-center justify-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-bold text-emerald-700 ${subscriptionIsActive ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}><Upload className="h-3.5 w-3.5" />{subscriptionIsActive ? 'Choose CSV file' : 'Renew to import CSV'}<input type="file" disabled={!subscriptionIsActive} accept=".csv,text/csv" onChange={handleBulkFile} className="hidden" /></label>{bulkMessage && <p className="mt-2 text-[11px] font-medium text-slate-600">{bulkMessage}</p>}</div>
           </form>
         </div>
 
@@ -1075,11 +1190,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                   </div>
 
                   <div className="flex shrink-0">
-                    <button onClick={() => setEditingProduct(p)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer" title="Edit Product"><Pencil className="w-4 h-4" /></button>
-                    <button onClick={() => handleDeleteProduct(p)} disabled={loading} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-50" title="Delete Product"><Trash2 className="w-4 h-4" /></button>
+                    <button disabled={!subscriptionIsActive} onClick={() => setEditingProduct(p)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30" title="Edit Product"><Pencil className="w-4 h-4" /></button>
+                    <button onClick={() => handleDeleteProduct(p)} disabled={loading || !subscriptionIsActive} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30" title="Delete Product"><Trash2 className="w-4 h-4" /></button>
                   </div>
                   </div>
-                  <label className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Quick stock update<select value={p.availability_status || 'available'} disabled={updatingStockId === p.id} onChange={(event) => handleQuickStockUpdate(p, event.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 disabled:opacity-50">{AVAILABILITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                  <label className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Quick stock update<select value={p.availability_status || 'available'} disabled={updatingStockId === p.id || !subscriptionIsActive} onChange={(event) => handleQuickStockUpdate(p, event.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700 disabled:opacity-50">{AVAILABILITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                 </div>
               ))}
             </div>
@@ -1185,10 +1300,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 </button>
                 <button 
                   type="submit" 
-                  disabled={loading} 
-                  className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-1"
+                  disabled={loading || !subscriptionIsActive}
+                  className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-1 disabled:opacity-40"
                 >
-                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
+                  {!subscriptionIsActive ? 'Renew subscription' : loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
                 </button>
               </div>
             </form>

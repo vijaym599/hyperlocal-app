@@ -143,6 +143,36 @@ const initDb = async () => {
       );
       CREATE INDEX IF NOT EXISTS user_activities_user_created_idx
         ON user_activities (user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS shop_notifications (
+        id BIGSERIAL PRIMARY KEY,
+        shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+        notification_type VARCHAR(40) NOT NULL DEFAULT 'renewal_reminder',
+        title VARCHAR(120) NOT NULL,
+        message TEXT NOT NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS shop_notifications_shop_created_idx
+        ON shop_notifications (shop_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS shop_subscription_queue (
+        id BIGSERIAL PRIMARY KEY,
+        shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+        plan VARCHAR(50) NOT NULL,
+        payment_id VARCHAR(255) NOT NULL UNIQUE,
+        amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+        term_days INTEGER NOT NULL CHECK (term_days > 0),
+        status VARCHAR(30) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','activated','cancelled')),
+        payment_confirmed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        activated_at TIMESTAMPTZ,
+        starts_at TIMESTAMPTZ,
+        ends_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS shop_subscription_queue_shop_status_idx
+        ON shop_subscription_queue (shop_id, status, created_at);
     `);
 
     // Existing installations may have been created before these fields existed.
@@ -225,6 +255,7 @@ const initDb = async () => {
     await require('./referrals').initReferrals(pool);
     await require('./phoneVerification').initPhoneVerification(pool);
     await require('./analytics').initAnalytics(pool);
+    await require('./subscriptionPromotions').initSubscriptionPromotions(pool);
     await require('./schemaOptimization').optimizeSchema(pool);
     console.log('PostgreSQL Tables Verified & Ready!');
   } catch (err) {

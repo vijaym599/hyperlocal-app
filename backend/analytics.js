@@ -38,7 +38,7 @@ function mountAnalytics(app, pool, authenticate, rateLimit) {
       const timezone = process.env.SHOP_TIMEZONE || 'Asia/Kolkata';
       const [totals, today, daily, pages, recentUsers, recentShops] = await Promise.all([
         pool.query(`SELECT
-          (SELECT COUNT(*)::int FROM users) AS total_users,
+          (SELECT COUNT(*)::int FROM users WHERE user_type='customer' AND is_admin=FALSE) AS total_users,
           (SELECT COUNT(*)::int FROM users WHERE user_type='customer' AND is_admin=FALSE) AS customers,
           (SELECT COUNT(*)::int FROM users WHERE user_type='shop_owner') AS shop_owners,
           (SELECT COUNT(*)::int FROM users WHERE is_admin=TRUE) AS admins,
@@ -52,7 +52,7 @@ function mountAnalytics(app, pool, authenticate, rateLimit) {
             (CURRENT_TIMESTAMP AT TIME ZONE $1)::date-($2::int-1),
             (CURRENT_TIMESTAMP AT TIME ZONE $1)::date,'1 day'::interval)::date AS day),
           visits AS (SELECT (visited_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors FROM page_visits WHERE visited_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
-          users_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_users FROM users WHERE created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
+          users_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_users FROM users WHERE user_type='customer' AND is_admin=FALSE AND created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
           shops_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_shops FROM shops WHERE created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1)
           SELECT d.day,COALESCE(v.page_views,0)::int AS page_views,COALESCE(v.unique_visitors,0)::int AS unique_visitors,
             COALESCE(u.new_users,0)::int AS new_users,COALESCE(s.new_shops,0)::int AS new_shops
@@ -60,7 +60,7 @@ function mountAnalytics(app, pool, authenticate, rateLimit) {
         pool.query(`SELECT page_name,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors
           FROM page_visits WHERE visited_at >= CURRENT_TIMESTAMP-($1::int||' days')::interval
           GROUP BY page_name ORDER BY page_views DESC,page_name LIMIT 12`, [days]),
-        pool.query(`SELECT id,owner_name,phone,user_type,is_admin,phone_verified,created_at FROM users ORDER BY created_at DESC,id DESC LIMIT 8`),
+        pool.query(`SELECT id,owner_name,phone,user_type,is_admin,phone_verified,created_at FROM users WHERE user_type='customer' AND is_admin=FALSE ORDER BY created_at DESC,id DESC LIMIT 8`),
         pool.query(`SELECT id,name,category,subscription_plan,is_verified,created_at FROM shops ORDER BY created_at DESC,id DESC LIMIT 8`),
       ]);
       res.set('Cache-Control', 'no-store').json({

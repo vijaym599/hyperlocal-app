@@ -19,11 +19,11 @@ test('visit collection validates anonymous IDs and admin overview checks databas
   const pool = { query: async (sql, values = []) => {
     if (sql.startsWith('INSERT INTO page_visits')) { inserts.push(values); return { rows: [] }; }
     if (sql.startsWith('SELECT is_admin')) return { rows: [{ is_admin: values[0] === 2 }] };
-    if (sql.includes('(SELECT COUNT(*)::int FROM users)')) return { rows: [{ total_users: 5, customers: 3, shop_owners: 1, admins: 1, total_shops: 1, verified_shops: 1, total_products: 8, open_requests: 2 }] };
+    if (sql.includes("AS total_users")) return { rows: [{ total_users: 3, customers: 3, shop_owners: 1, admins: 1, total_shops: 1, verified_shops: 1, total_products: 8, open_requests: 2 }] };
     if (sql.includes('COUNT(DISTINCT visitor_id)') && sql.includes('::date=')) return { rows: [{ page_views: 4, unique_visitors: 2 }] };
     if (sql.startsWith('WITH dates')) return { rows: [{ day: '2026-10-02', page_views: 4, unique_visitors: 2, new_users: 1, new_shops: 1 }] };
     if (sql.includes('GROUP BY page_name')) return { rows: [{ page_name: 'explore', page_views: 4, unique_visitors: 2 }] };
-    if (sql.includes('FROM users ORDER BY')) return { rows: [] };
+    if (sql.includes("FROM users WHERE user_type='customer'")) return { rows: [] };
     if (sql.includes('FROM shops ORDER BY')) return { rows: [] };
     throw new Error(`Unexpected query: ${sql.slice(0, 80)}`);
   } };
@@ -43,7 +43,7 @@ test('visit collection validates anonymous IDs and admin overview checks databas
     const response = await overview(2);
     assert.equal(response.status, 200);
     const body = await response.json();
-    assert.equal(body.totals.total_users, 5);
+    assert.equal(body.totals.total_users, 3);
     assert.equal(body.today.unique_visitors, 2);
     assert.equal(body.daily[0].page_views, 4);
   } finally { await new Promise((resolve) => server.close(resolve)); }

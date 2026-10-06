@@ -3,7 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
-const { refreshShopStatus } = require('./shopSchedule');
+const { refreshShopStatus, refreshSubscriptionEntitlements } = require('./shopSchedule');
 const { categorySql, categoryIds } = require('./searchCategory');
 const { geocode, searchPlaces } = require('./geocoder');
 const { withAccountValidation } = require('./middleware/auth');
@@ -13,7 +13,7 @@ const { normalizePhone, isValidPhone, startVerification, checkVerification, cons
 const { mountAnalytics } = require('./analytics');
 const { mountAdminManagement } = require('./adminManagement');
 const { mountAccount } = require('./account');
-const { subscriptionTerms } = require('./subscriptionTerms');
+const { getPromotion, promotedSubscriptionTerms } = require('./subscriptionPromotions');
 
 const app = express();
 const authenticate = withAccountValidation(pool);
@@ -124,6 +124,30 @@ const isShopOwner = async (shopId, userId) => {
   return result.rows.length > 0;
 };
 
+const ownedShopAccess = async (shopId, userId) => (await pool.query(
+  `SELECT *,subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
+   FROM shops WHERE id=$1 AND user_id=$2`, [shopId, userId]
+)).rows[0];
+
+const productShopAccess = async (productId, userId) => (await pool.query(
+  `SELECT s.id,s.subscription_ends_at,s.subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
+   FROM products p JOIN shops s ON s.id=p.shop_id WHERE p.id=$1 AND s.user_id=$2`, [productId, userId]
+)).rows[0];
+
+const offerShopAccess = async (offerId, userId) => (await pool.query(
+  `SELECT s.id,s.subscription_ends_at,s.subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
+   FROM shop_offers o JOIN shops s ON s.id=o.shop_id WHERE o.id=$1 AND s.user_id=$2`, [offerId, userId]
+)).rows[0];
+
+const requireActiveSubscription = (res, shop) => {
+  if (!shop) { res.status(404).json({ error: 'Shop or item not found, or you do not own it.' }); return false; }
+  if (!shop.subscription_active) {
+    res.status(403).json({ error: 'Your shop subscription has expired. Renew the plan to manage products and offers.' });
+    return false;
+  }
+  return true;
+};
+
 const isAdmin = async (userId) => {
   const result = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
   return Boolean(result.rows[0]?.is_admin);
@@ -172,6 +196,16 @@ app.get('/api/location/search', rateLimit(20, 60 * 60 * 1000), async (req, res) 
   } catch (error) {
     console.error('Area lookup failed:', error.message);
     return res.status(502).json({ error: 'Unable to find this area. Please try again.' });
+  }
+});
+
+app.get('/api/subscriptions/promotion', async (_req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    return res.json({ promotion: await getPromotion(pool, { activeOnly: true }) });
+  } catch (error) {
+    console.error('Subscription promotion lookup failed:', error.message);
+    return res.status(500).json({ error: 'Unable to load the current subscription offer.' });
   }
 });
 
@@ -251,12 +285,12 @@ app.post('/api/auth/register-shop', async (req, res) => {
     );
 
     const newUser = userResult.rows[0];
-    const terms = subscriptionTerms(selected_plan);
+    const terms = await promotedSubscriptionTerms(client, selected_plan);
 
     const shopResult = await client.query(
       `INSERT INTO shops
-        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at, city, subscription_months, subscription_amount_paise, subscription_started_at, subscription_ends_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END, $16, $17, $18, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + make_interval(months => $17::int))
+        (user_id, name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, opening_hours, opening_time, closing_time, subscription_plan, payment_id, is_verified, verified_at, city, subscription_months, subscription_amount_paise, subscription_bonus_months, subscription_promotion_name, subscription_started_at, subscription_ends_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CASE WHEN $15 THEN CURRENT_TIMESTAMP ELSE NULL END, $16, $17, $18, $19, $20, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + make_interval(days => $21::int))
        RETURNING *`,
       [
         newUser.id,
@@ -275,12 +309,19 @@ app.post('/api/auth/register-shop', async (req, res) => {
         payment_id || null,
         VERIFIED_SUBSCRIPTION_PLANS.has(selected_plan),
         city?.trim() || null,
-        terms.months,
-        terms.amountPaise
+        terms.totalMonths,
+        terms.amountPaise,
+        terms.bonusMonths,
+        terms.promotionName,
+        terms.days
       ]
     );
 
     const newShop = shopResult.rows[0];
+    await client.query(`INSERT INTO shop_subscription_queue
+      (shop_id,plan,payment_id,amount_paise,term_days,status,payment_confirmed_at,activated_at,starts_at,ends_at,purchase_months,bonus_months,promotion_id,promotion_name)
+      VALUES ($1,$2,$3,$4,$5,'activated',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + make_interval(days => $5::int),$6,$7,$8,$9)`,
+    [newShop.id, selected_plan, payment_id, terms.amountPaise, terms.days, terms.purchaseMonths, terms.bonusMonths, terms.promotionId, terms.promotionName]);
     await attachReferral(client, req.body.referral_code, newShop, cleanPhone);
     await client.query('COMMIT');
 
@@ -484,23 +525,115 @@ app.get('/api/shops/:shopId/portfolio', async (req, res) => {
 app.patch('/api/shops/:shopId/subscription', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
   const { action, plan, payment_id } = req.body || {};
-  if (!shopId || !['change', 'cancel', 'resume'].includes(action)) return res.status(400).json({ error: 'A valid subscription action is required.' });
+  if (!shopId || !['change', 'renew', 'cancel', 'resume'].includes(action)) return res.status(400).json({ error: 'A valid subscription action is required.' });
   try {
     if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only manage your own subscription.' });
-    let result;
     if (action === 'cancel') {
-      result = await pool.query(`UPDATE shops SET subscription_status = 'cancelled', subscription_cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`, [shopId]);
-    } else {
-      if (!Object.hasOwn(SUBSCRIPTION_LIMITS, plan) || !payment_id) return res.status(400).json({ error: 'Choose a valid paid plan and complete payment.' });
-      const verified = VERIFIED_SUBSCRIPTION_PLANS.has(plan);
-      const terms = subscriptionTerms(plan);
-      result = await pool.query(`UPDATE shops SET subscription_plan = $1::varchar, payment_id = $2, subscription_status = 'active', subscription_cancelled_at = NULL, is_verified = $3, verified_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,
-        subscription_months = $5, subscription_amount_paise = $6, subscription_started_at = CURRENT_TIMESTAMP,
-        subscription_ends_at = (CASE WHEN subscription_plan = $1::varchar THEN GREATEST(COALESCE(subscription_ends_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP) ELSE CURRENT_TIMESTAMP END) + make_interval(months => $5::int),
-        updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`, [plan, payment_id, verified, shopId, terms.months, terms.amountPaise]);
+      const result = await pool.query(`UPDATE shops SET subscription_status = 'cancelled', subscription_cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`, [shopId]);
+      return res.json({ message: 'Subscription renewal cancelled.', shop: result.rows[0] });
     }
-    return res.json({ message: action === 'cancel' ? 'Subscription renewal cancelled.' : 'Subscription updated.', shop: result.rows[0] });
+    if (action === 'resume') {
+      const result = await pool.query(`UPDATE shops SET subscription_status='active',subscription_cancelled_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *`, [shopId]);
+      return res.json({ message: 'Automatic renewal resumed.', shop: result.rows[0] });
+    }
+    if (!Object.hasOwn(SUBSCRIPTION_LIMITS, plan) || !payment_id) return res.status(400).json({ error: 'Choose a valid paid plan and complete payment.' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const shop = (await client.query('SELECT * FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE', [shopId, req.user.userId])).rows[0];
+      if (!shop) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Shop not found.' }); }
+      const terms = await promotedSubscriptionTerms(client, plan);
+      const queued = (await client.query(`INSERT INTO shop_subscription_queue
+        (shop_id,plan,payment_id,amount_paise,term_days,purchase_months,bonus_months,promotion_id,promotion_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [shopId, plan, payment_id, terms.amountPaise, terms.days, terms.purchaseMonths, terms.bonusMonths, terms.promotionId, terms.promotionName])).rows[0];
+      const hasActiveTerm = shop.subscription_ends_at && new Date(shop.subscription_ends_at).getTime() > Date.now();
+      if (hasActiveTerm) {
+        await client.query('COMMIT');
+        return res.status(202).json({ message: 'Payment confirmed. The purchased plan was added to your activation queue.', shop, queued_subscription: queued });
+      }
+      const verified = VERIFIED_SUBSCRIPTION_PLANS.has(plan);
+      const result = await client.query(`UPDATE shops SET subscription_plan=$1,payment_id=$2,subscription_status='active',subscription_cancelled_at=NULL,is_verified=$3,
+        verified_at=CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,subscription_months=$5,subscription_amount_paise=$6,
+        subscription_bonus_months=$7,subscription_promotion_name=$8,
+        subscription_started_at=CURRENT_TIMESTAMP,subscription_ends_at=CURRENT_TIMESTAMP + make_interval(days => $9::int),updated_at=CURRENT_TIMESTAMP
+        WHERE id=$4 RETURNING *`, [plan, payment_id, verified, shopId, terms.totalMonths, terms.amountPaise, terms.bonusMonths, terms.promotionName, terms.days]);
+      await client.query(`UPDATE shop_subscription_queue SET status='activated',activated_at=CURRENT_TIMESTAMP,starts_at=CURRENT_TIMESTAMP,
+        ends_at=CURRENT_TIMESTAMP + make_interval(days => $2::int) WHERE id=$1`, [queued.id, terms.days]);
+      await client.query('COMMIT');
+      return res.json({ message: 'Payment confirmed and plan activated.', shop: result.rows[0] });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') return res.status(409).json({ error: 'This payment has already been recorded.' });
+      throw error;
+    } finally { client.release(); }
   } catch (err) { console.error('Subscription update failed:', err.code || err.name); return res.status(500).json({ error: 'Unable to update subscription. Please try again shortly.' }); }
+});
+
+app.get('/api/shops/:shopId/subscription-queue', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!Number.isInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view your own subscription queue.' });
+    const result = await pool.query(`SELECT id,plan,amount_paise,term_days,purchase_months,bonus_months,promotion_name,status,payment_confirmed_at,activated_at,starts_at,ends_at
+      FROM shop_subscription_queue WHERE shop_id=$1 ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END,created_at ASC LIMIT 50`, [shopId]);
+    return res.json({ subscriptions: result.rows });
+  } catch (error) { return res.status(500).json({ error: 'Unable to load subscription queue.' }); }
+});
+
+app.post('/api/shops/:shopId/subscription-queue/:queueId/activate', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId); const queueId = Number(req.params.queueId);
+  if (!Number.isInteger(shopId) || shopId < 1 || !Number.isInteger(queueId) || queueId < 1) return res.status(400).json({ error: 'A valid queued subscription is required.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const shop = (await client.query('SELECT id FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE', [shopId, req.user.userId])).rows[0];
+    if (!shop) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'You can only activate plans for your own shop.' }); }
+    const queued = (await client.query(`SELECT * FROM shop_subscription_queue WHERE id=$1 AND shop_id=$2 AND status='queued' FOR UPDATE`, [queueId, shopId])).rows[0];
+    if (!queued) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Queued subscription not found or already activated.' }); }
+    const verified = VERIFIED_SUBSCRIPTION_PLANS.has(queued.plan);
+    const totalMonths = Number(queued.purchase_months) + Number(queued.bonus_months || 0);
+    const result = await client.query(`UPDATE shops SET subscription_plan=$1,payment_id=$2,subscription_status='active',subscription_cancelled_at=NULL,is_verified=$3,
+      verified_at=CASE WHEN $3 THEN CURRENT_TIMESTAMP ELSE NULL END,subscription_months=$5,subscription_amount_paise=$6,
+      subscription_bonus_months=$7,subscription_promotion_name=$8,
+      subscription_started_at=CURRENT_TIMESTAMP,subscription_ends_at=CURRENT_TIMESTAMP + make_interval(days => $9::int),updated_at=CURRENT_TIMESTAMP
+      WHERE id=$4 RETURNING *`, [queued.plan, queued.payment_id, verified, shopId, totalMonths, queued.amount_paise, queued.bonus_months || 0, queued.promotion_name || null, queued.term_days]);
+    await client.query(`UPDATE shop_subscription_queue SET status='activated',activated_at=CURRENT_TIMESTAMP,starts_at=CURRENT_TIMESTAMP,
+      ends_at=CURRENT_TIMESTAMP + make_interval(days => term_days) WHERE id=$1`, [queueId]);
+    await client.query('COMMIT');
+    return res.json({ message: 'Queued plan activated now.', shop: result.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Queued subscription activation failed:', error.message);
+    return res.status(500).json({ error: 'Unable to activate queued subscription.' });
+  } finally { client.release(); }
+});
+
+app.get('/api/shops/:shopId/notifications', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!Number.isInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view notifications for your own shop.' });
+    const result = await pool.query(`SELECT id,notification_type,title,message,read_at,created_at FROM shop_notifications WHERE shop_id=$1 ORDER BY created_at DESC LIMIT 20`, [shopId]);
+    return res.json({ notifications: result.rows, unread_count: result.rows.filter((item) => !item.read_at).length });
+  } catch (error) {
+    console.error('Shop notifications failed:', error.message);
+    return res.status(500).json({ error: 'Unable to load shop notifications.' });
+  }
+});
+
+app.patch('/api/shops/:shopId/notifications/read', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!Number.isInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only update notifications for your own shop.' });
+    await pool.query('UPDATE shop_notifications SET read_at=CURRENT_TIMESTAMP WHERE shop_id=$1 AND read_at IS NULL', [shopId]);
+    return res.json({ message: 'Notifications marked as read.' });
+  } catch (error) {
+    console.error('Shop notification update failed:', error.message);
+    return res.status(500).json({ error: 'Unable to update notifications.' });
+  }
 });
 
 // ==========================================
@@ -521,15 +654,8 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
   if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Product image is too large. Please upload an optimized image under 1.2 MB.' });
 
   try {
-    const shopRes = await pool.query('SELECT * FROM shops WHERE id = $1', [shopId]);
-    if (shopRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Shop not found in PostgreSQL Database!' });
-    }
-    const shop = shopRes.rows[0];
-
-    if (!(await isShopOwner(shopId, req.user.userId))) {
-      return res.status(403).json({ error: 'You can only manage products for your own shop.' });
-    }
+    const shop = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, shop)) return;
 
     // Check Limit
     const countRes = await pool.query('SELECT COUNT(*) FROM products WHERE shop_id = $1', [shopId]);
@@ -570,9 +696,8 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId); const incoming = Array.isArray(req.body?.products) ? req.body.products : [];
   if (!shopId || !incoming.length || incoming.length > 200) return res.status(400).json({ error: 'Upload between 1 and 200 products.' });
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only manage products for your own shop.' });
-    const shop = (await pool.query('SELECT subscription_plan FROM shops WHERE id = $1', [shopId])).rows[0];
-    if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+    const shop = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, shop)) return;
     const existingCount = Number((await pool.query('SELECT COUNT(*)::int AS count FROM products WHERE shop_id = $1', [shopId])).rows[0].count);
     const limit = SUBSCRIPTION_LIMITS[shop.subscription_plan] || 10;
     if (existingCount + incoming.length > limit) return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
@@ -691,11 +816,13 @@ app.patch('/api/products/:id/availability', authenticate, async (req, res) => {
   const { availability_status } = req.body || {};
   if (!productId || !AVAILABILITY_STATUSES.has(availability_status)) return res.status(400).json({ error: 'Choose a valid stock status.' });
   try {
+    const access = await productShopAccess(productId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query(
       `UPDATE products p
        SET availability_status = $1, availability_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        FROM shops s
-       WHERE p.id = $2 AND p.shop_id = s.id AND s.user_id = $3
+       WHERE p.id = $2 AND p.shop_id = s.id AND s.user_id = $3 AND s.subscription_ends_at > CURRENT_TIMESTAMP
        RETURNING p.*`,
       [availability_status, productId, req.user.userId]
     );
@@ -724,6 +851,8 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
   if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Product image is too large. Please upload an optimized image under 1.2 MB.' });
 
   try {
+    const access = await productShopAccess(Number(id), req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const defaultImg = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
     const prodImg = (image_url && image_url.trim() !== '') ? image_url : defaultImg;
 
@@ -737,7 +866,7 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
           availability_updated_at = CASE WHEN $6 IS NULL THEN p.availability_updated_at ELSE CURRENT_TIMESTAMP END,
           updated_at = CURRENT_TIMESTAMP
       FROM shops s
-      WHERE p.id = $7 AND p.shop_id = s.id AND s.user_id = $8
+      WHERE p.id = $7 AND p.shop_id = s.id AND s.user_id = $8 AND s.subscription_ends_at > CURRENT_TIMESTAMP
       RETURNING p.*
     `;
 
@@ -773,10 +902,12 @@ app.delete('/api/products/:id', authenticate, async (req, res) => {
   const productId = Number(req.params.id);
   if (!productId) return res.status(400).json({ error: 'Invalid product ID.' });
   try {
+    const access = await productShopAccess(productId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query(
       `DELETE FROM products p
        USING shops s
-       WHERE p.id = $1 AND p.shop_id = s.id AND s.user_id = $2
+       WHERE p.id = $1 AND p.shop_id = s.id AND s.user_id = $2 AND s.subscription_ends_at > CURRENT_TIMESTAMP
        RETURNING p.id`,
       [productId, req.user.userId]
     );
@@ -798,7 +929,8 @@ app.get('/api/offers', async (_req, res) => {
               s.latitude, s.longitude, s.google_map_link, s.is_verified
        FROM shop_offers o
        JOIN shops s ON s.id = o.shop_id
-       WHERE o.is_active = TRUE AND (o.valid_until IS NULL OR o.valid_until >= CURRENT_DATE)
+       WHERE o.is_active = TRUE AND s.subscription_ends_at > CURRENT_TIMESTAMP
+         AND (o.valid_until IS NULL OR o.valid_until >= CURRENT_DATE)
        ORDER BY o.created_at DESC
        LIMIT 100`
     );
@@ -828,7 +960,8 @@ app.post('/api/shops/:shopId/offers', authenticate, async (req, res) => {
   if (!shopId || !title || title.length > 120 || description.length > 500 || discountText.length > 80) return res.status(400).json({ error: 'Provide an offer title under 120 characters and keep offer details concise.' });
   if (!isValidOfferDate(validUntil)) return res.status(400).json({ error: 'Offer expiry date must be today or a future valid date.' });
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only add offers to your own shop.' });
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query(
       `INSERT INTO shop_offers (shop_id, title, description, discount_text, valid_until)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
@@ -843,10 +976,12 @@ app.patch('/api/offers/:offerId', authenticate, async (req, res) => {
   const { is_active } = req.body || {};
   if (!offerId) return res.status(400).json({ error: 'A valid offer is required.' });
   try {
+    const access = await offerShopAccess(offerId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     if (typeof is_active === 'boolean') {
       const result = await pool.query(
         `UPDATE shop_offers o SET is_active = $1, updated_at = CURRENT_TIMESTAMP
-         FROM shops s WHERE o.id = $2 AND o.shop_id = s.id AND s.user_id = $3 RETURNING o.*`,
+         FROM shops s WHERE o.id = $2 AND o.shop_id = s.id AND s.user_id = $3 AND s.subscription_ends_at > CURRENT_TIMESTAMP RETURNING o.*`,
         [is_active, offerId, req.user.userId]
       );
       if (!result.rows.length) return res.status(404).json({ error: 'Offer not found, or you do not own this shop.' });
@@ -860,7 +995,7 @@ app.patch('/api/offers/:offerId', authenticate, async (req, res) => {
     if (!isValidOfferDate(validUntil)) return res.status(400).json({ error: 'Offer expiry date must be today or a future valid date.' });
     const result = await pool.query(
       `UPDATE shop_offers o SET title = $1, description = $2, discount_text = $3, valid_until = $4, updated_at = CURRENT_TIMESTAMP
-       FROM shops s WHERE o.id = $5 AND o.shop_id = s.id AND s.user_id = $6 RETURNING o.*`,
+       FROM shops s WHERE o.id = $5 AND o.shop_id = s.id AND s.user_id = $6 AND s.subscription_ends_at > CURRENT_TIMESTAMP RETURNING o.*`,
       [title, description || null, discountText || null, validUntil, offerId, req.user.userId]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Offer not found, or you do not own this shop.' });
@@ -872,9 +1007,11 @@ app.delete('/api/offers/:offerId', authenticate, async (req, res) => {
   const offerId = Number(req.params.offerId);
   if (!offerId) return res.status(400).json({ error: 'A valid offer is required.' });
   try {
+    const access = await offerShopAccess(offerId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query(
       `DELETE FROM shop_offers o USING shops s
-       WHERE o.id = $1 AND o.shop_id = s.id AND s.user_id = $2 RETURNING o.id`,
+       WHERE o.id = $1 AND o.shop_id = s.id AND s.user_id = $2 AND s.subscription_ends_at > CURRENT_TIMESTAMP RETURNING o.id`,
       [offerId, req.user.userId]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Offer not found, or you do not own this shop.' });
@@ -1026,11 +1163,13 @@ app.get('/api/search/products', async (req, res) => {
         WITH ranked_products AS (
           SELECT
             p.id, p.name, p.description, p.brand, p.price, p.image_url,
-            p.availability_status, p.availability_updated_at, p.updated_at AS catalog_updated_at,
+            CASE WHEN s.subscription_ends_at > CURRENT_TIMESTAMP THEN p.availability_status ELSE 'out_of_stock' END AS availability_status,
+            p.availability_updated_at, p.updated_at AS catalog_updated_at,
             s.id AS shop_id, s.name AS shop_name, s.category AS shop_category, s.image_url AS shop_image_url,
             s.address, s.latitude, s.longitude, s.google_map_link,
             s.phone, s.whatsapp_number, s.opening_hours, s.is_open, s.open_status_updated_at,
-            s.is_verified, s.verified_at,
+            s.is_verified, s.verified_at,s.subscription_ends_at,
+            s.subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active,
             COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS product_average_rating,
             (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS product_review_count,
             COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM shop_reviews WHERE shop_id = s.id), 0) AS shop_average_rating,
@@ -1045,13 +1184,14 @@ app.get('/api/search/products', async (req, res) => {
           WHERE (
             p.name ILIKE $3 OR p.brand ILIKE $3 OR p.description ILIKE $3 OR s.name ILIKE $3
           )
-          AND ($5 = 'all' OR p.availability_status = $5)
+          AND ($5 = 'all' OR (s.subscription_ends_at > CURRENT_TIMESTAMP AND p.availability_status = $5))
           AND ($6 = 'all' OR (${categorySql}) = $6)
         )
         SELECT *
         FROM ranked_products
         WHERE distance_km <= $4
         ORDER BY
+          CASE WHEN subscription_active THEN 0 ELSE 1 END,
           CASE availability_status
             WHEN 'available' THEN 0
             WHEN 'low_stock' THEN 1
@@ -1105,7 +1245,7 @@ app.get('/api/search/suggestions', async (req, res) => {
             ))) AS distance_km
           FROM products p
           JOIN shops s ON s.id = p.shop_id
-          WHERE p.availability_status = 'available'
+          WHERE p.availability_status = 'available' AND s.subscription_ends_at > CURRENT_TIMESTAMP
             AND (p.name ILIKE $3 OR p.brand ILIKE $3)
         )
         SELECT name, brand, MIN(distance_km) AS distance_km
@@ -1371,13 +1511,13 @@ const startServer = async () => {
   try {
     validateProduction();
     await pool.initDb();
-    await refreshShopStatus(pool);
+    await Promise.all([refreshShopStatus(pool), refreshSubscriptionEntitlements(pool)]);
     let refreshing = false;
     const timer = setInterval(async () => {
       if (refreshing) return;
       refreshing = true;
-      try { await refreshShopStatus(pool); }
-      catch (error) { console.error('Shop schedule refresh failed:', error.message); }
+      try { await Promise.all([refreshShopStatus(pool), refreshSubscriptionEntitlements(pool)]); }
+      catch (error) { console.error('Shop schedule/subscription refresh failed:', error.message); }
       finally { refreshing = false; }
     }, 15000);
     timer.unref();

@@ -2,6 +2,8 @@ import {
   ArrowLeft, BarChart3, Check, Eye, MapPin, MessageCircle, PackageCheck,
   PhoneCall, ShieldCheck, Sparkles, Star, Store, X
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { API_BASE_URL } from '../config';
 
 const plans = [
   {
@@ -147,6 +149,15 @@ function Availability({ value }) {
 }
 
 export default function PricingPage({ onBack, onStart }) {
+  const [promotion, setPromotion] = useState(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${API_BASE_URL}/api/subscriptions/promotion`, { signal: controller.signal, cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() : { promotion: null })
+      .then((data) => setPromotion(data.promotion || null))
+      .catch((error) => { if (error.name !== 'AbortError') setPromotion(null); });
+    return () => controller.abort();
+  }, []);
   return (
     <section className="pb-16">
       <div className="mx-auto max-w-7xl px-5 pt-8 sm:px-8">
@@ -174,6 +185,7 @@ export default function PricingPage({ onBack, onStart }) {
       </header>
 
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
+        {promotion && <div className="mt-8 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-center text-sm font-bold text-violet-900"><Sparkles className="mr-2 inline h-4 w-4" />{promotion.name}: pay for {promotion.purchase_months} month and get {promotion.bonus_months} months free on {promotion.eligible_plans.map((plan) => plan.charAt(0).toUpperCase() + plan.slice(1)).join(', ')}. Offer ends {new Date(promotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</div>}
         <div className="mt-12 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
           {plans.map((plan) => (
             <article key={plan.id} className={`relative flex flex-col overflow-hidden rounded-3xl border p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl ${plan.recommended ? 'border-emerald-500 bg-white ring-2 ring-emerald-100' : 'border-slate-200 bg-white'}`}>
@@ -184,6 +196,7 @@ export default function PricingPage({ onBack, onStart }) {
               <p className="mt-1 text-xs font-semibold leading-5 text-slate-400">Best for: {plan.bestFor}</p>
               <div className="mt-5 flex items-end gap-1"><span className="text-4xl font-black tracking-tight text-slate-950">₹{plan.price}</span><span className="pb-1 text-sm font-semibold text-slate-500">/ month</span></div>
               <p className="mt-1 text-xs font-semibold text-slate-500">{plan.billed}</p>
+              {promotion?.eligible_plans?.includes(plan.id) && Number(promotion.purchase_months) === (plan.id === 'basic' ? 6 : 1) && <p className="mt-3 rounded-xl bg-violet-100 px-3 py-2 text-xs font-black text-violet-800">+ {promotion.bonus_months} months free</p>}
               <div className="mt-5 rounded-2xl bg-slate-950 px-4 py-3 text-white"><p className="text-xs font-semibold text-slate-400">Catalog capacity</p><p className="mt-1 text-lg font-black">{plan.products} products</p></div>
               <div className="mt-4 space-y-2.5">
                 <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${plan.verified ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>{plan.verified ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}Verified badge {plan.verified ? 'included' : 'not included'}</div>

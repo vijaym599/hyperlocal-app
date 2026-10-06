@@ -1,4 +1,4 @@
-const KEY = 'nearbuy-discovery-v1';
+const KEY = 'nearbuy-discovery-v2';
 const TTL = 30 * 60 * 1000;
 export const discoveryKey = (location, query = '', radius = '', availability = 'all', category = 'all') =>
   JSON.stringify([location?.lat, location?.lng, query, radius, availability, category]);

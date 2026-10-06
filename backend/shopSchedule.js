@@ -15,4 +15,22 @@ const refreshShopStatus = (pool) => pool.query(`
   FROM scheduled WHERE s.id = scheduled.id AND s.is_open IS DISTINCT FROM scheduled.scheduled_open
 `, [SHOP_TIMEZONE]);
 
-module.exports = { refreshShopStatus, SHOP_TIMEZONE };
+// Expired subscriptions immediately lose catalog/offer publishing privileges.
+// Product rows are retained for renewal, but customers see them as out of stock.
+const refreshSubscriptionEntitlements = (pool) => pool.query(`
+  UPDATE products p
+  SET availability_status='out_of_stock',availability_updated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+  FROM shops s
+  WHERE p.shop_id=s.id AND s.subscription_ends_at IS NOT NULL
+    AND s.subscription_ends_at <= CURRENT_TIMESTAMP
+    AND p.availability_status <> 'out_of_stock';
+
+  UPDATE shop_offers o
+  SET is_active=FALSE,updated_at=CURRENT_TIMESTAMP
+  FROM shops s
+  WHERE o.shop_id=s.id AND s.subscription_ends_at IS NOT NULL
+    AND s.subscription_ends_at <= CURRENT_TIMESTAMP
+    AND o.is_active=TRUE;
+`);
+
+module.exports = { refreshShopStatus, refreshSubscriptionEntitlements, SHOP_TIMEZONE };

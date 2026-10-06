@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 
 // Stub the database before loading the API: tests never import db.js or use .env.
 const calls = [];
+let shopSubscriptionActive = true;
 const verificationClaims = new Map();
 const loginUser = { id: 91, phone: '+919876543210', email: null, owner_name: 'Two step user', user_type: 'customer', is_admin: false, auth_version: 1, password: bcrypt.hashSync('Password123', 4) };
 const searchProducts = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, shop_id: 1, name: `Product ${index + 1}` }));
@@ -24,6 +25,10 @@ const pool = {
     if (sql.includes('AS product_count')) return { rows: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `Shop ${i + 1}`, product_count: 2 })) };
     if (sql.includes('WITH ranked_products')) return { rows: searchProducts.slice(values[7], values[7] + values[6]) };
     if (sql.includes('INSERT INTO product_requests')) return { rows: [{ id: 1 }] };
+    if (sql.includes("SET availability_status='out_of_stock'")) return { rows: [] };
+    if (sql.includes('subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active') && sql.includes('FROM products p')) return { rows: [{ id: 1, subscription_active: shopSubscriptionActive }] };
+    if (sql.includes('subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active') && sql.includes('FROM shop_offers o')) return { rows: [{ id: 1, subscription_active: shopSubscriptionActive }] };
+    if (sql.includes('subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active') && sql.includes('FROM shops')) return { rows: [{ id: 1, subscription_plan: 'pro', subscription_active: shopSubscriptionActive }] };
     if (sql.includes('SELECT subscription_plan')) return { rows: [{ subscription_plan: 'pro' }] };
     if (sql.includes('UPDATE products p')) return { rows: [{ id: 1, name: values[0], description: values[1], brand: values[2], price: values[3] }] };
     if (sql.includes('SELECT s.id, s.name, s.category')) return { rows: [{ id: 1, name: 'Test shop' }] };
@@ -77,6 +82,9 @@ test('discovery returns ten products per page and exposes subsequent pages', asy
   assert.equal(last.results.length, 5);
   assert.equal(last.has_more, false);
   assert.equal(last.next_page, null);
+  const sql = calls.findLast(call => call.sql.includes('WITH ranked_products')).sql;
+  assert.match(sql, /CASE WHEN subscription_active THEN 0 ELSE 1 END/);
+  assert.match(sql, /ELSE 'out_of_stock' END AS availability_status/);
 });
 
 test('shop directory is public, paginated, and independent of SEO configuration', async () => {
@@ -202,6 +210,19 @@ test('product create and edit reject blank, malformed and oversized prices', asy
   assert.deepEqual(clear.values.slice(8), [true, true]);
   assert.equal((await update({ name: 'Rice', price: '12.50' })).status, 200);
   assert.deepEqual(calls.findLast(call => call.sql.includes('UPDATE products p')).values.slice(8), [false, false]);
+});
+
+test('expired shop subscriptions block catalog and offer mutations', async () => {
+  shopSubscriptionActive = false;
+  try {
+    const updateProduct = await fetch(base + '/api/products/1', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` }, body: JSON.stringify({ name: 'Rice', price: 10 }) });
+    assert.equal(updateProduct.status, 403);
+    assert.match((await updateProduct.json()).error, /subscription has expired/i);
+    const addProduct = await post('/api/shops/1/products', { name: 'Rice', price: 10 }, true);
+    assert.equal(addProduct.status, 403);
+    const offer = await post('/api/shops/1/offers', { title: 'Sale' }, true);
+    assert.equal(offer.status, 403);
+  } finally { shopSubscriptionActive = true; }
 });
 
 test('public portfolio rejects invalid ids and selects no billing fields', async () => {

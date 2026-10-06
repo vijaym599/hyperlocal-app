@@ -9,6 +9,7 @@ async function optimizeSchema(pool) {
     CREATE UNIQUE INDEX IF NOT EXISTS shops_one_per_owner_idx ON shops(user_id);
     CREATE INDEX IF NOT EXISTS shops_discovery_idx ON shops(category,is_open,id);
     CREATE INDEX IF NOT EXISTS shops_admin_queue_idx ON shops(is_verified,updated_at DESC);
+    CREATE INDEX IF NOT EXISTS shops_subscription_expiry_idx ON shops(subscription_ends_at,id) WHERE subscription_ends_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS products_shop_catalog_idx ON products(shop_id,name,id);
     CREATE INDEX IF NOT EXISTS products_availability_shop_idx ON products(availability_status,shop_id);
     CREATE INDEX IF NOT EXISTS product_requests_status_created_idx ON product_requests(status,created_at DESC);
