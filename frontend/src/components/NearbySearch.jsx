@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X } from 'lucide-react';
+import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X, LocateFixed } from 'lucide-react';
 import { productUrl, shopUrl } from '../publicUrls';
 import ProductSkeleton from './ProductSkeleton';
 import DistanceSelector from './DistanceSelector';
@@ -560,31 +560,32 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const visibleShops = processedShops.slice((currentShopPage - 1) * PAGE_SIZE, currentShopPage * PAGE_SIZE);
 
   return (
-    <div className="mx-auto min-h-screen w-full max-w-[1600px] px-5 pb-10 font-sans sm:px-8 lg:px-10">
-      <section className="nearby-reveal relative mb-6 overflow-hidden rounded-[2rem] bg-slate-950 px-6 py-8 text-white shadow-2xl shadow-slate-900/20 sm:px-10 sm:py-12">
+    <div className="mx-auto min-h-screen w-full max-w-[1600px] px-3 pb-8 font-sans sm:px-8 sm:pb-10 lg:px-10">
+      <section className="nearby-reveal relative mb-4 overflow-hidden rounded-3xl bg-slate-950 px-3 py-4 text-white shadow-2xl shadow-slate-900/20 sm:mb-6 sm:px-10 sm:py-10">
         <div className="nearby-hero-orb absolute -right-20 -top-24 h-64 w-64 rounded-full bg-emerald-400/25 blur-3xl" />
         <div className="nearby-hero-orb nearby-hero-orb-delayed absolute -bottom-28 left-1/3 h-52 w-52 rounded-full bg-cyan-400/15 blur-3xl" />
-        <div className="relative grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:gap-12">
-          <div className="max-w-3xl">
+        <div className="relative grid items-center gap-3 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(420px,520px)] lg:gap-x-12 lg:gap-y-3">
+          <div className="max-w-3xl lg:row-span-2">
             <span className="inline-flex rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-200">Nearbuy discovery</span>
-            <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-5xl">Find it nearby.<br /><span className="text-emerald-300">Buy it today.</span></h1>
+            <h1 className="mt-4 text-[2rem] font-black leading-[1.08] tracking-tight sm:text-5xl">Find it nearby.<br /><span className="text-emerald-300">Buy it today.</span></h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Search real products from local shops, check availability, and visit with confidence.</p>
             <div className="mt-5 flex flex-wrap gap-2 text-xs font-semibold text-slate-200"><span className="rounded-full bg-white/10 px-3 py-1.5">Live availability</span><span className="rounded-full bg-white/10 px-3 py-1.5">Local prices</span><span className="rounded-full bg-white/10 px-3 py-1.5">Direct shop contact</span></div>
           </div>
 
-          <div className="rounded-2xl border border-white/15 bg-white/[0.07] p-3 shadow-xl backdrop-blur-md sm:p-4">
+          <div className="rounded-2xl border border-white/15 bg-white/[0.07] p-2 shadow-xl backdrop-blur-md sm:p-4">
             <div className="flex min-w-0 items-center gap-2">
-              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${userLocation ? 'bg-emerald-400 text-emerald-950' : 'bg-amber-300 text-amber-950'}`}><MapPin className="h-4 w-4" /></span>
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg sm:h-9 sm:w-9 sm:rounded-xl ${userLocation ? 'bg-emerald-400 text-emerald-950' : 'bg-amber-300 text-amber-950'}`}><MapPin className="h-4 w-4" /></span>
               <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Your location</p>
+                <p className="hidden text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 sm:block">Your location</p>
                 <p title={userLocation ? placeName : locationError || 'Location unavailable'} className="truncate text-sm font-bold text-white">{gettingLocation ? 'Finding location…' : userLocation ? placeName : 'Location unavailable'}</p>
               </div>
+              <button type="button" onClick={() => setShowAreaPicker((value) => !value)} aria-label="Choose area or pincode" aria-expanded={showAreaPicker} className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-white/10 px-2 text-[11px] font-bold text-emerald-200 sm:hidden"><Search className="h-3.5 w-3.5" />Area</button>
               <button type="button" onClick={getUserLocation} disabled={gettingLocation} title="Use current GPS location" aria-label="Use current GPS location" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white transition hover:bg-white hover:text-slate-900 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${gettingLocation ? 'animate-spin' : ''}`} /></button>
             </div>
 
             {locationError && !userLocation && <p role="alert" className="mt-2 rounded-lg bg-amber-300/10 px-2.5 py-2 text-[11px] leading-4 text-amber-100">{locationError}</p>}
 
-            <button type="button" onClick={() => setShowAreaPicker((value) => !value)} aria-expanded={showAreaPicker} className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2 text-xs font-bold text-emerald-200 transition hover:bg-white/10">
+            <button type="button" onClick={() => setShowAreaPicker((value) => !value)} aria-expanded={showAreaPicker} className="mt-3 hidden w-full items-center justify-between rounded-xl border border-white/10 bg-slate-950/30 px-3 py-2 text-xs font-bold text-emerald-200 transition hover:bg-white/10 sm:flex">
               <span className="flex items-center gap-2"><Search className="h-3.5 w-3.5" />Choose area / pincode</span>
               <ChevronRight className={`h-3.5 w-3.5 transition ${showAreaPicker ? 'rotate-90' : ''}`} />
             </button>
@@ -599,11 +600,61 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
               <p className="mt-2 text-[10px] text-slate-500">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-slate-300">OpenStreetMap contributors</a></p>
             </div>}
           </div>
+
+        <div className="relative rounded-2xl border border-white/15 bg-white/[0.09] p-2 shadow-xl backdrop-blur-xl">
+          <div className="flex items-center gap-2">
+            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-white px-3 py-2.5 text-slate-800 shadow-sm">
+              <Search className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span className="sr-only">Search products or shops nearby</span>
+              <input
+                type="search"
+                placeholder="Search products or shops nearby..."
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => window.setTimeout(() => setShowSuggestions(false), 150)}
+                className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none placeholder:text-slate-400"
+              />
+            </label>
+            <label className={`flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 text-xs font-bold transition ${availableOnly ? 'bg-emerald-400 text-emerald-950' : 'bg-white/10 text-slate-200 hover:bg-white/15'}`}>
+              <input type="checkbox" checked={availableOnly} onChange={(event) => setAvailableOnly(event.target.checked)} className="sr-only" />
+              <span className={`h-2 w-2 rounded-full ${availableOnly ? 'bg-emerald-900' : 'bg-slate-400'}`} />
+              Available
+            </label>
+            <label className="hidden h-10 shrink-0 items-center gap-2 rounded-xl bg-white/10 px-3 text-xs font-bold text-slate-200 sm:flex">
+              <LocateFixed className="h-4 w-4 text-emerald-300" />
+              <span className="sr-only">Search distance</span>
+              <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="cursor-pointer bg-transparent pr-1 text-xs font-bold text-white outline-none [&>option]:text-slate-900">
+                <option value="">Global</option>
+                <option value="2">Within 2 km</option>
+                <option value="5">Within 5 km</option>
+                <option value="10">Within 10 km</option>
+                <option value="20">Within 20 km</option>
+                <option value="50">Within 50 km</option>
+              </select>
+            </label>
+          </div>
+          <label className="mt-2 flex h-9 w-full items-center gap-2 rounded-xl bg-white/10 px-3 text-xs font-bold text-slate-200 sm:hidden">
+            <LocateFixed className="h-4 w-4 shrink-0 text-emerald-300" />
+            <span>Distance</span>
+            <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="min-w-0 flex-1 cursor-pointer bg-transparent text-right text-xs font-bold text-white outline-none [&>option]:text-slate-900">
+              <option value="">Global</option>
+              <option value="2">Within 2 km</option>
+              <option value="5">Within 5 km</option>
+              <option value="10">Within 10 km</option>
+              <option value="20">Within 20 km</option>
+              <option value="50">Within 50 km</option>
+            </select>
+          </label>
+          {showSuggestions && searchQuery.trim().length >= 2 && suggestions.length > 0 && <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl bg-white p-1 text-slate-800 shadow-lg">
+            {suggestions.map((suggestion) => <button key={`${suggestion.name}-${suggestion.brand || ''}`} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setSearchQuery(suggestion.name); setShowSuggestions(false); }} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-xs hover:bg-emerald-50"><span className="truncate font-semibold">{suggestion.name}{suggestion.brand ? ` · ${suggestion.brand}` : ''}</span><span className="shrink-0 text-emerald-700">{formatDistanceText(Number(suggestion.distance_km))}</span></button>)}
+          </div>}
+        </div>
         </div>
       </section>
 
       {/* 2. Scrollable Instagram-style business & service feed */}
-      <section className="nearby-reveal nearby-reveal-delay-1 mb-6 overflow-hidden rounded-3xl border border-white bg-white/90 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:p-5">
+      <section className="nearby-reveal nearby-reveal-delay-1 mb-4 overflow-hidden rounded-3xl border border-white bg-white/90 p-3 shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:mb-6 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3 px-1">
           <div>
             <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-800"><Layers className="h-4 w-4 text-emerald-600" /> Explore local stores</h3>
@@ -648,10 +699,10 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       </section>
 
       {/* 3. Search Input Field */}
-      <div className="nearby-reveal nearby-reveal-delay-2 mb-10 rounded-3xl border border-slate-200/80 bg-white/90 p-2 shadow-[0_12px_30px_rgba(15,23,42,0.07)] backdrop-blur transition-shadow duration-300 hover:shadow-[0_18px_38px_rgba(15,23,42,0.1)]">
-        <div className="mb-2 lg:flex lg:items-center lg:gap-2">
+      <div className="hidden">
+        <div className="mb-2 flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
-        <Search className="absolute left-4 top-4 h-5 w-5 text-emerald-600" />
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600 sm:left-4 sm:h-5 sm:w-5" />
         <input
           type="text"
           placeholder="Search products or shops nearby..."
@@ -659,7 +710,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
           onChange={(e) => setSearchQuery(e.target.value)}
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => window.setTimeout(() => setShowSuggestions(false), 150)}
-          className="w-full rounded-2xl border border-transparent bg-slate-50 py-3.5 pl-12 pr-4 text-sm font-semibold placeholder:text-slate-400 focus:border-emerald-200 focus:bg-white focus:outline-none"
+          className="w-full rounded-xl border border-transparent bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-semibold placeholder:text-slate-400 focus:border-emerald-200 focus:bg-white focus:outline-none sm:rounded-2xl sm:py-3.5 sm:pl-12 sm:pr-4"
         />
         {showSuggestions && searchQuery.trim().length >= 2 && suggestions.length > 0 && (
           <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
@@ -672,11 +723,11 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
           </div>
         )}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 px-1 pb-1 lg:mt-0 lg:shrink-0 lg:px-0 lg:pb-0">
-        <label className={`flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition ${availableOnly ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-700'}`}>
+        <div className="flex shrink-0 items-center">
+        <label className={`flex min-h-10 cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-bold transition sm:px-3 ${availableOnly ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-100 text-slate-700'}`}>
           <input type="checkbox" checked={availableOnly} onChange={(event) => setAvailableOnly(event.target.checked)} className="sr-only" />
           <span className={`h-2 w-2 rounded-full ${availableOnly ? 'bg-emerald-200' : 'bg-slate-300'}`} />
-          Available only
+          <span className="sm:hidden">Available</span><span className="hidden sm:inline">Available only</span>
         </label>
       </div>
         </div>
@@ -896,8 +947,8 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         </div>
       )}
       {selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-0 sm:items-center sm:p-4">
+          <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5">
             <div className="flex items-start justify-between gap-4">
               <div><h2 className="text-xl font-bold text-slate-800">{selectedProduct.name}</h2><p className="mt-1 text-lg font-extrabold text-emerald-600">₹{selectedProduct.price}</p></div>
               <button onClick={() => setSelectedProduct(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
@@ -922,8 +973,8 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         </div>
       )}
       {reviewItem && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 p-0 sm:items-center sm:p-4">
+          <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div><p className="text-xs font-bold uppercase tracking-wide text-amber-600">Community ratings</p><h2 className="mt-1 text-xl font-bold text-slate-800">{reviewTarget === 'shop' ? reviewItem.name : reviewItem.name}</h2><p className="mt-1 text-sm text-slate-500">See what local customers think and share your experience.</p></div>
               <button onClick={() => setReviewItem(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>

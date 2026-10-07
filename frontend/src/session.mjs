@@ -9,7 +9,7 @@ export const resolveTab = (tab, session, portfolioShop) => {
   const access = {
     explore: ['guest', 'customer'], assistant: ['guest', 'customer'], offers: ['guest', 'customer'],
     'shop-portfolio': ['guest', 'customer', 'shop_owner', 'admin'], activity: ['customer'],
-    'my-shop': ['guest', 'shop_owner'], demand: ['admin'],
+    'my-shop': ['guest', 'shop_owner'], 'report-issue': ['guest', 'customer', 'shop_owner'], demand: ['admin'],
   };
   if ((access[tab] && !access[tab].includes(role)) || (tab === 'shop-portfolio' && !portfolioShop)) return homeTab(session);
   return tab;

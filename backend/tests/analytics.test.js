@@ -21,7 +21,7 @@ test('visit collection validates anonymous IDs and admin overview checks databas
     if (sql.startsWith('SELECT is_admin')) return { rows: [{ is_admin: values[0] === 2 }] };
     if (sql.includes("AS total_users")) return { rows: [{ total_users: 3, customers: 3, shop_owners: 1, admins: 1, total_shops: 1, verified_shops: 1, total_products: 8, open_requests: 2 }] };
     if (sql.includes('COUNT(DISTINCT visitor_id)') && sql.includes('::date=')) return { rows: [{ page_views: 4, unique_visitors: 2 }] };
-    if (sql.startsWith('WITH dates')) return { rows: [{ day: '2026-10-02', page_views: 4, unique_visitors: 2, new_users: 1, new_shops: 1 }] };
+    if (sql.startsWith('WITH dates') || sql.startsWith('WITH bounds')) return { rows: [{ day: '2026-10-02', page_views: 4, unique_visitors: 2, new_users: 1, new_shops: 1 }] };
     if (sql.includes('GROUP BY page_name')) return { rows: [{ page_name: 'explore', page_views: 4, unique_visitors: 2 }] };
     if (sql.includes("FROM users WHERE user_type='customer'")) return { rows: [] };
     if (sql.includes('FROM shops ORDER BY')) return { rows: [] };
@@ -46,5 +46,9 @@ test('visit collection validates anonymous IDs and admin overview checks databas
     assert.equal(body.totals.total_users, 3);
     assert.equal(body.today.unique_visitors, 2);
     assert.equal(body.daily[0].page_views, 4);
+    const allTime = await (await overview(2, 'all')).json();
+    assert.equal(allTime.range, 'all');
+    assert.equal(allTime.range_days, null);
+    assert.equal(allTime.granularity, 'month');
   } finally { await new Promise((resolve) => server.close(resolve)); }
 });

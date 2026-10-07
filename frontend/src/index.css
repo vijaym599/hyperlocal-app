@@ -131,7 +131,25 @@ html, body, #root {
   margin: 0 !important;
   padding: 0 !important;
   background: #f6f8fb;
-  overflow-x: hidden;
+  overflow-x: clip;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-padding-top: 5rem;
+}
+
+img, svg, video, canvas {
+  max-width: 100%;
+}
+
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+button, a {
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -143,6 +161,46 @@ body {
 button, input, select, textarea { font: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(16, 185, 129, 0.25); outline-offset: 2px; }
 ::selection { background: #a7f3d0; color: #064e3b; }
+
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  input,
+  select,
+  textarea {
+    min-width: 0;
+  }
+
+  .overflow-x-auto {
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Keep the horizontally scrollable admin tabs from sizing the whole dashboard. */
+@media (max-width: 1023px) {
+  .max-w-\[1800px\] > .grid {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .max-w-\[1800px\] > .grid > aside,
+  .max-w-\[1800px\] > .grid > main,
+  .max-w-\[1800px\] > .grid > aside nav {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .max-w-\[1800px\] > .grid > aside {
+    overflow: hidden;
+  }
+}
 
 /* Keeps the category rail touch-scrollable while preserving the clean stories look. */
 .scrollbar-none::-webkit-scrollbar {

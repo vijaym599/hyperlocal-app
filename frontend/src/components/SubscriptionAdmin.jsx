@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, BellRing, CalendarDays, Gift, Loader2, Phone, RefreshCw, Save } from 'lucide-react';
+import { AlertTriangle, BellRing, CalendarDays, Gift, Loader2, Phone, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 
 const PLANS = [['basic', 'Basic'], ['pro', 'Pro'], ['advance', 'Advance'], ['enterprise', 'Enterprise']];
@@ -9,6 +9,10 @@ const dateTimeLocal = (value) => {
   const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
 };
+const blankPromotion = () => ({
+  name: '2027 Annual Offer', is_active: true, purchase_months: 1, bonus_months: 11,
+  eligible_plans: PLANS.map(([id]) => id), starts_at: dateTimeLocal(new Date()), ends_at: '2027-12-31T23:59',
+});
 const subscriptionSnapshotTime = Date.now();
 const daysLeft = (value, now = subscriptionSnapshotTime) => value ? Math.ceil((new Date(value).getTime() - now) / 86400000) : null;
 
@@ -20,6 +24,7 @@ export default function SubscriptionAdmin({ session }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [promotion, setPromotion] = useState(null);
+  const [promotionExists, setPromotionExists] = useState(false);
   const [promotionLoading, setPromotionLoading] = useState(true);
   const [savingPromotion, setSavingPromotion] = useState(false);
 
@@ -41,7 +46,10 @@ export default function SubscriptionAdmin({ session }) {
       const response = await fetch(`${API_BASE_URL}/api/admin/subscription-promotion`, { headers: { Authorization: `Bearer ${session.token}` }, signal });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to load the subscription offer.');
-      if (!signal?.aborted) setPromotion({ ...data.promotion, starts_at: dateTimeLocal(data.promotion.starts_at), ends_at: dateTimeLocal(data.promotion.ends_at) });
+      if (!signal?.aborted) {
+        setPromotionExists(Boolean(data.promotion));
+        setPromotion(data.promotion ? { ...data.promotion, starts_at: dateTimeLocal(data.promotion.starts_at), ends_at: dateTimeLocal(data.promotion.ends_at) } : blankPromotion());
+      }
     } catch (loadError) { if (loadError.name !== 'AbortError') setError(loadError.message); }
     finally { if (!signal?.aborted) setPromotionLoading(false); }
   }, [session.token]);
@@ -72,8 +80,21 @@ export default function SubscriptionAdmin({ session }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save the subscription offer.');
       setPromotion({ ...data.promotion, starts_at: dateTimeLocal(data.promotion.starts_at), ends_at: dateTimeLocal(data.promotion.ends_at) });
+      setPromotionExists(true);
       setNotice(data.message);
     } catch (saveError) { setError(saveError.message); }
+    finally { setSavingPromotion(false); }
+  };
+
+  const removePromotion = async () => {
+    if (!window.confirm('Remove this subscription offer? Bonus months already granted to existing purchases will remain.')) return;
+    setSavingPromotion(true); setError(''); setNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/subscription-promotion`, { method: 'DELETE', headers });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to remove the subscription offer.');
+      setPromotion(blankPromotion()); setPromotionExists(false); setNotice(data.message);
+    } catch (removeError) { setError(removeError.message); }
     finally { setSavingPromotion(false); }
   };
 
@@ -95,12 +116,12 @@ export default function SubscriptionAdmin({ session }) {
     {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
 
     <section className="mt-6 rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm sm:p-6">
-      <div className="flex items-start gap-3"><span className="rounded-xl bg-violet-700 p-2.5 text-white"><Gift className="h-5 w-5" /></span><div><h2 className="text-lg font-black text-slate-950">Launch subscription offer</h2><p className="mt-1 text-sm text-slate-600">The offer is locked into each purchase, so changing or ending it will not remove bonus time already granted.</p></div></div>
+      <div className="flex items-start gap-3"><span className="rounded-xl bg-violet-700 p-2.5 text-white"><Gift className="h-5 w-5" /></span><div><h2 className="text-lg font-black text-slate-950">Launch subscription offer</h2><p className="mt-1 text-sm text-slate-600">Each shop can redeem a campaign once. Editing, disabling, or re-enabling it will not grant a second redemption. Remove it and create a new offer to start a new campaign. Bonus time already purchased always remains.</p></div></div>
       {promotionLoading || !promotion ? <p className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading offer settings…</p> : <form onSubmit={savePromotion} className="mt-5 space-y-4">
         <div className="grid gap-4 md:grid-cols-3"><label className="text-xs font-bold text-slate-600 md:col-span-1">Offer name<input required maxLength={120} value={promotion.name} onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label><label className="text-xs font-bold text-slate-600">Paid months<input required type="number" min="1" max="36" value={promotion.purchase_months} onChange={(event) => setPromotion({ ...promotion, purchase_months: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label><label className="text-xs font-bold text-slate-600">Free add-on months<input required type="number" min="1" max="36" value={promotion.bonus_months} onChange={(event) => setPromotion({ ...promotion, bonus_months: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label></div>
-        <fieldset><legend className="text-xs font-bold text-slate-600">Eligible plans</legend><div className="mt-2 flex flex-wrap gap-2">{PLANS.map(([id, label]) => <label key={id} className={`cursor-pointer rounded-xl border px-3 py-2 text-xs font-bold ${promotion.eligible_plans.includes(id) ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}><input type="checkbox" checked={promotion.eligible_plans.includes(id)} onChange={() => togglePlan(id)} className="sr-only" />{label}</label>)}</div><p className="mt-2 text-[11px] text-slate-500">Basic currently has a 6-month paid term. A 1-month offer therefore applies to Pro, Advance and Enterprise by default.</p></fieldset>
+        <fieldset><legend className="text-xs font-bold text-slate-600">Eligible plans</legend><div className="mt-2 flex flex-wrap gap-2">{PLANS.map(([id, label]) => <label key={id} className={`cursor-pointer rounded-xl border px-3 py-2 text-xs font-bold ${promotion.eligible_plans.includes(id) ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}><input type="checkbox" checked={promotion.eligible_plans.includes(id)} onChange={() => togglePlan(id)} className="sr-only" />{label}</label>)}</div><p className="mt-2 text-[11px] text-slate-500">All plans use a one-month paid term, so this offer can include Basic, Pro, Advance and Enterprise.</p></fieldset>
         <div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-600">Offer starts<input required type="datetime-local" value={promotion.starts_at} onChange={(event) => setPromotion({ ...promotion, starts_at: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label><label className="text-xs font-bold text-slate-600">Offer ends<input required type="datetime-local" value={promotion.ends_at} onChange={(event) => setPromotion({ ...promotion, ends_at: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label></div>
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-100 bg-white p-4"><label className="flex items-center gap-3 text-sm font-bold text-slate-800"><input type="checkbox" checked={promotion.is_active} onChange={(event) => setPromotion({ ...promotion, is_active: event.target.checked })} className="h-5 w-5 accent-violet-700" />Enable this offer</label><button type="submit" disabled={savingPromotion || !promotion.eligible_plans.length} className="flex items-center gap-2 rounded-xl bg-violet-700 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-40">{savingPromotion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{savingPromotion ? 'Saving…' : 'Save offer'}</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-100 bg-white p-4"><label className="flex items-center gap-3 text-sm font-bold text-slate-800"><input type="checkbox" checked={promotion.is_active} onChange={(event) => setPromotion({ ...promotion, is_active: event.target.checked })} className="h-5 w-5 accent-violet-700" />Enable this offer</label><div className="flex flex-wrap gap-2">{promotionExists && <button type="button" onClick={removePromotion} disabled={savingPromotion} className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-bold text-rose-700 disabled:opacity-40"><Trash2 className="h-4 w-4" />Remove offer</button>}<button type="submit" disabled={savingPromotion || !promotion.eligible_plans.length} className="flex items-center gap-2 rounded-xl bg-violet-700 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-40">{savingPromotion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{savingPromotion ? 'Saving…' : promotionExists ? 'Save changes' : 'Create offer'}</button></div></div>
       </form>}
     </section>
 

@@ -30,12 +30,40 @@ function mountAnalytics(app, pool, authenticate, rateLimit) {
   });
 
   app.get('/api/admin/overview', authenticate, async (req, res) => {
-    const days = Number(req.query.days || 30);
-    if (![7, 30, 90].includes(days)) return res.status(400).json({ error: 'Analytics range must be 7, 30, or 90 days.' });
+    const requestedRange = String(req.query.days || '30').toLowerCase();
+    const allTime = requestedRange === 'all';
+    const days = allTime ? null : Number(requestedRange);
+    if (!allTime && ![7, 30, 90].includes(days)) return res.status(400).json({ error: 'Analytics range must be 7, 30, 90 days, or all time.' });
     try {
       const admin = await pool.query('SELECT is_admin FROM users WHERE id=$1', [req.user.userId]);
       if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: 'Administrator access is required.' });
       const timezone = process.env.SHOP_TIMEZONE || 'Asia/Kolkata';
+      const seriesQuery = allTime ? `WITH bounds AS (SELECT
+            date_trunc('month',LEAST(
+              COALESCE((SELECT MIN(visited_at AT TIME ZONE $1) FROM page_visits),CURRENT_TIMESTAMP AT TIME ZONE $1),
+              COALESCE((SELECT MIN(created_at AT TIME ZONE $1) FROM users WHERE user_type='customer' AND is_admin=FALSE),CURRENT_TIMESTAMP AT TIME ZONE $1),
+              COALESCE((SELECT MIN(created_at AT TIME ZONE $1) FROM shops),CURRENT_TIMESTAMP AT TIME ZONE $1)
+            ))::date AS first_month,
+            date_trunc('month',CURRENT_TIMESTAMP AT TIME ZONE $1)::date AS last_month),
+          dates AS (SELECT generate_series(first_month,last_month,'1 month'::interval)::date AS day FROM bounds),
+          visits AS (SELECT date_trunc('month',visited_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors FROM page_visits GROUP BY 1),
+          users_daily AS (SELECT date_trunc('month',created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_users FROM users WHERE user_type='customer' AND is_admin=FALSE GROUP BY 1),
+          shops_daily AS (SELECT date_trunc('month',created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_shops FROM shops GROUP BY 1)
+          SELECT d.day,COALESCE(v.page_views,0)::int AS page_views,COALESCE(v.unique_visitors,0)::int AS unique_visitors,
+            COALESCE(u.new_users,0)::int AS new_users,COALESCE(s.new_shops,0)::int AS new_shops
+          FROM dates d LEFT JOIN visits v USING(day) LEFT JOIN users_daily u USING(day) LEFT JOIN shops_daily s USING(day) ORDER BY d.day`
+        : `WITH dates AS (SELECT generate_series(
+            (CURRENT_TIMESTAMP AT TIME ZONE $1)::date-($2::int-1),
+            (CURRENT_TIMESTAMP AT TIME ZONE $1)::date,'1 day'::interval)::date AS day),
+          visits AS (SELECT (visited_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors FROM page_visits WHERE visited_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
+          users_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_users FROM users WHERE user_type='customer' AND is_admin=FALSE AND created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
+          shops_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_shops FROM shops WHERE created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1)
+          SELECT d.day,COALESCE(v.page_views,0)::int AS page_views,COALESCE(v.unique_visitors,0)::int AS unique_visitors,
+            COALESCE(u.new_users,0)::int AS new_users,COALESCE(s.new_shops,0)::int AS new_shops
+          FROM dates d LEFT JOIN visits v USING(day) LEFT JOIN users_daily u USING(day) LEFT JOIN shops_daily s USING(day) ORDER BY d.day`;
+      const pagesQuery = `SELECT page_name,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors
+          FROM page_visits ${allTime ? '' : "WHERE visited_at >= CURRENT_TIMESTAMP-($1::int||' days')::interval"}
+          GROUP BY page_name ORDER BY page_views DESC,page_name LIMIT 12`;
       const [totals, today, daily, pages, recentUsers, recentShops] = await Promise.all([
         pool.query(`SELECT
           (SELECT COUNT(*)::int FROM users WHERE user_type='customer' AND is_admin=FALSE) AS total_users,
@@ -48,24 +76,15 @@ function mountAnalytics(app, pool, authenticate, rateLimit) {
           (SELECT COUNT(*)::int FROM product_requests WHERE status IN ('new','working')) AS open_requests`),
         pool.query(`SELECT COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors
           FROM page_visits WHERE (visited_at AT TIME ZONE $1)::date=(CURRENT_TIMESTAMP AT TIME ZONE $1)::date`, [timezone]),
-        pool.query(`WITH dates AS (SELECT generate_series(
-            (CURRENT_TIMESTAMP AT TIME ZONE $1)::date-($2::int-1),
-            (CURRENT_TIMESTAMP AT TIME ZONE $1)::date,'1 day'::interval)::date AS day),
-          visits AS (SELECT (visited_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors FROM page_visits WHERE visited_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
-          users_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_users FROM users WHERE user_type='customer' AND is_admin=FALSE AND created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1),
-          shops_daily AS (SELECT (created_at AT TIME ZONE $1)::date AS day,COUNT(*)::int AS new_shops FROM shops WHERE created_at >= CURRENT_TIMESTAMP-($2::int||' days')::interval GROUP BY 1)
-          SELECT d.day,COALESCE(v.page_views,0)::int AS page_views,COALESCE(v.unique_visitors,0)::int AS unique_visitors,
-            COALESCE(u.new_users,0)::int AS new_users,COALESCE(s.new_shops,0)::int AS new_shops
-          FROM dates d LEFT JOIN visits v USING(day) LEFT JOIN users_daily u USING(day) LEFT JOIN shops_daily s USING(day) ORDER BY d.day`, [timezone, days]),
-        pool.query(`SELECT page_name,COUNT(*)::int AS page_views,COUNT(DISTINCT visitor_id)::int AS unique_visitors
-          FROM page_visits WHERE visited_at >= CURRENT_TIMESTAMP-($1::int||' days')::interval
-          GROUP BY page_name ORDER BY page_views DESC,page_name LIMIT 12`, [days]),
+        pool.query(seriesQuery, allTime ? [timezone] : [timezone, days]),
+        pool.query(pagesQuery, allTime ? [] : [days]),
         pool.query(`SELECT id,owner_name,phone,user_type,is_admin,phone_verified,created_at FROM users WHERE user_type='customer' AND is_admin=FALSE ORDER BY created_at DESC,id DESC LIMIT 8`),
         pool.query(`SELECT id,name,category,subscription_plan,is_verified,created_at FROM shops ORDER BY created_at DESC,id DESC LIMIT 8`),
       ]);
       res.set('Cache-Control', 'no-store').json({
         totals: totals.rows[0], today: today.rows[0], daily: daily.rows, pages: pages.rows,
-        recent_users: recentUsers.rows, recent_shops: recentShops.rows, range_days: days, timezone,
+        recent_users: recentUsers.rows, recent_shops: recentShops.rows, range_days: days,
+        range: allTime ? 'all' : String(days), granularity: allTime ? 'month' : 'day', timezone,
       });
     } catch (error) {
       console.error('Admin overview failed:', error.message);

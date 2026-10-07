@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { attachReferral, PLAN_PRICES_PAISE, redeem, reviewRedemption } = require('../referrals');
 
 test('first subscription rewards are 20 percent in integer paise for all plans', async () => {
-  const rewards = { basic: 400, pro: 3980, advance: 9980, enterprise: 19980 };
+  const rewards = { basic: 2400, pro: 3980, advance: 9980, enterprise: 19980 };
   for (const [plan, price] of Object.entries(PLAN_PRICES_PAISE)) {
     const calls = [];
     const client = { query: async (sql, values) => { calls.push({ sql, values }); return { rows: [{ id: 1, phone: '+919876543210', user_type: 'customer', is_admin: false }] }; } };
@@ -12,7 +12,7 @@ test('first subscription rewards are 20 percent in integer paise for all plans',
     assert.equal(calls[1].values[6], rewards[plan]);
   }
 });
-test('six-month Basic purchase rewards use the full purchase amount', async () => {
+test('Basic monthly purchase rewards use the full purchase amount', async () => {
   const calls = [];
   const client = { query: async (sql, values) => { calls.push({ sql, values }); return { rows: [{ id: 1, phone: '+919876543210', user_type: 'customer', is_admin: false }] }; } };
   await attachReferral(client, 'NB' + 'a'.repeat(24), { id: 10, name: 'Shop', user_id: 2, subscription_plan: 'basic', subscription_amount_paise: 12000 }, '+919876543211');

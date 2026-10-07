@@ -13,8 +13,9 @@ const { normalizePhone, isValidPhone, startVerification, checkVerification, cons
 const { mountAnalytics } = require('./analytics');
 const { mountAdminManagement } = require('./adminManagement');
 const { mountAccount } = require('./account');
-const { getPromotion, promotedSubscriptionTerms } = require('./subscriptionPromotions');
+const { getPromotion, getShopPromotion, promotedSubscriptionTerms, claimPromotionRedemption } = require('./subscriptionPromotions');
 const { mountCustomerAssistant } = require('./customerAssistant');
+const { mountSupportReports } = require('./supportReports');
 
 const app = express();
 const authenticate = withAccountValidation(pool);
@@ -62,6 +63,7 @@ const rateLimit = (limit, windowMs, scope = '') => (req, res, next) => {
 
 app.use('/api/auth', rateLimit(20, 15 * 60 * 1000));
 mountCustomerAssistant(app, pool, rateLimit(20, 10 * 60 * 1000, 'customer-assistant'));
+mountSupportReports(app, pool, authenticate, rateLimit);
 const rateLimitCleanup = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateLimitStore) if (entry.resetAt <= now) rateLimitStore.delete(key);
@@ -211,6 +213,19 @@ app.get('/api/subscriptions/promotion', async (_req, res) => {
   }
 });
 
+app.get('/api/shops/:shopId/subscription-promotion', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!Number.isSafeInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view offers for your own shop.' });
+    res.set('Cache-Control', 'no-store');
+    return res.json(await getShopPromotion(pool, shopId));
+  } catch (error) {
+    console.error('Shop subscription promotion lookup failed:', error.message);
+    return res.status(500).json({ error: 'Unable to check subscription offer eligibility.' });
+  }
+});
+
 // ==========================================
 // 1. REGISTER SHOP & USER (PostgreSQL)
 // ==========================================
@@ -320,10 +335,11 @@ app.post('/api/auth/register-shop', async (req, res) => {
     );
 
     const newShop = shopResult.rows[0];
-    await client.query(`INSERT INTO shop_subscription_queue
-      (shop_id,plan,payment_id,amount_paise,term_days,status,payment_confirmed_at,activated_at,starts_at,ends_at,purchase_months,bonus_months,promotion_id,promotion_name)
-      VALUES ($1,$2,$3,$4,$5,'activated',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + make_interval(days => $5::int),$6,$7,$8,$9)`,
-    [newShop.id, selected_plan, payment_id, terms.amountPaise, terms.days, terms.purchaseMonths, terms.bonusMonths, terms.promotionId, terms.promotionName]);
+    const purchase = (await client.query(`INSERT INTO shop_subscription_queue
+      (shop_id,plan,payment_id,amount_paise,term_days,status,payment_confirmed_at,activated_at,starts_at,ends_at,purchase_months,bonus_months,promotion_id,promotion_campaign_version,promotion_name)
+      VALUES ($1,$2,$3,$4,$5,'activated',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + make_interval(days => $5::int),$6,$7,$8,$9,$10) RETURNING id`,
+    [newShop.id, selected_plan, payment_id, terms.amountPaise, terms.days, terms.purchaseMonths, terms.bonusMonths, terms.promotionId, terms.promotionCampaignVersion, terms.promotionName])).rows[0];
+    await claimPromotionRedemption(client, { shopId: newShop.id, purchaseId: purchase.id, terms });
     await attachReferral(client, req.body.referral_code, newShop, cleanPhone);
     await client.query('COMMIT');
 
@@ -337,6 +353,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
     console.error("Register Error in Backend:", err.message);
+    if (err.code === '23505') return res.status(409).json({ error: 'This account or payment has already been recorded.' });
     return res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to create your shop account.' });
   } finally {
     client?.release();
@@ -545,11 +562,20 @@ app.patch('/api/shops/:shopId/subscription', authenticate, async (req, res) => {
       await client.query('BEGIN');
       const shop = (await client.query('SELECT * FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE', [shopId, req.user.userId])).rows[0];
       if (!shop) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Shop not found.' }); }
-      const terms = await promotedSubscriptionTerms(client, plan);
+      if (action === 'renew' && plan !== shop.subscription_plan) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Renewal must use the current plan. Choose change plan to select a different plan.' });
+      }
+      if (action === 'change' && plan === shop.subscription_plan) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'This is already the current plan. Choose renew plan instead.' });
+      }
+      const terms = await promotedSubscriptionTerms(client, plan, { shopId });
       const queued = (await client.query(`INSERT INTO shop_subscription_queue
-        (shop_id,plan,payment_id,amount_paise,term_days,purchase_months,bonus_months,promotion_id,promotion_name)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [shopId, plan, payment_id, terms.amountPaise, terms.days, terms.purchaseMonths, terms.bonusMonths, terms.promotionId, terms.promotionName])).rows[0];
+        (shop_id,plan,payment_id,amount_paise,term_days,purchase_months,bonus_months,promotion_id,promotion_campaign_version,promotion_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [shopId, plan, payment_id, terms.amountPaise, terms.days, terms.purchaseMonths, terms.bonusMonths, terms.promotionId, terms.promotionCampaignVersion, terms.promotionName])).rows[0];
+      await claimPromotionRedemption(client, { shopId, purchaseId: queued.id, terms });
       const hasActiveTerm = shop.subscription_ends_at && new Date(shop.subscription_ends_at).getTime() > Date.now();
       if (hasActiveTerm) {
         await client.query('COMMIT');
@@ -570,7 +596,7 @@ app.patch('/api/shops/:shopId/subscription', authenticate, async (req, res) => {
       if (error.code === '23505') return res.status(409).json({ error: 'This payment has already been recorded.' });
       throw error;
     } finally { client.release(); }
-  } catch (err) { console.error('Subscription update failed:', err.code || err.name); return res.status(500).json({ error: 'Unable to update subscription. Please try again shortly.' }); }
+  } catch (err) { console.error('Subscription update failed:', err.code || err.name); return res.status(err.status || 500).json({ error: err.status ? err.message : 'Unable to update subscription. Please try again shortly.' }); }
 });
 
 app.get('/api/shops/:shopId/subscription-queue', authenticate, async (req, res) => {
@@ -578,7 +604,7 @@ app.get('/api/shops/:shopId/subscription-queue', authenticate, async (req, res) 
   if (!Number.isInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
   try {
     if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view your own subscription queue.' });
-    const result = await pool.query(`SELECT id,plan,amount_paise,term_days,purchase_months,bonus_months,promotion_name,status,payment_confirmed_at,activated_at,starts_at,ends_at
+    const result = await pool.query(`SELECT id,plan,amount_paise,term_days,purchase_months,bonus_months,promotion_id,promotion_campaign_version,promotion_name,status,payment_confirmed_at,activated_at,starts_at,ends_at
       FROM shop_subscription_queue WHERE shop_id=$1 ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END,created_at ASC LIMIT 50`, [shopId]);
     return res.json({ subscriptions: result.rows });
   } catch (error) { return res.status(500).json({ error: 'Unable to load subscription queue.' }); }
@@ -592,8 +618,9 @@ app.post('/api/shops/:shopId/subscription-queue/:queueId/activate', authenticate
     await client.query('BEGIN');
     const shop = (await client.query('SELECT id FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE', [shopId, req.user.userId])).rows[0];
     if (!shop) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'You can only activate plans for your own shop.' }); }
-    const queued = (await client.query(`SELECT * FROM shop_subscription_queue WHERE id=$1 AND shop_id=$2 AND status='queued' FOR UPDATE`, [queueId, shopId])).rows[0];
-    if (!queued) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Queued subscription not found or already activated.' }); }
+    const queued = (await client.query(`SELECT * FROM shop_subscription_queue WHERE shop_id=$1 AND status='queued' ORDER BY created_at,id LIMIT 1 FOR UPDATE`, [shopId])).rows[0];
+    if (!queued) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'No queued subscription is waiting for activation.' }); }
+    if (Number(queued.id) !== queueId) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Activate the oldest queued subscription first.' }); }
     const verified = VERIFIED_SUBSCRIPTION_PLANS.has(queued.plan);
     const totalMonths = Number(queued.purchase_months) + Number(queued.bonus_months || 0);
     const result = await client.query(`UPDATE shops SET subscription_plan=$1,payment_id=$2,subscription_status='active',subscription_cancelled_at=NULL,is_verified=$3,

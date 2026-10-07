@@ -7,8 +7,8 @@ import { API_BASE_URL } from '../config';
 
 const plans = [
   {
-    id: 'basic', name: 'Basic', eyebrow: 'Start small', price: 20,
-    billed: '₹120 billed every 6 months', products: '10', verified: false, insights: false,
+    id: 'basic', name: 'Basic', eyebrow: 'Start small', price: 120,
+    billed: 'Billed monthly', products: '10', verified: false, insights: false,
     bestFor: 'Home businesses and small neighbourhood shops',
     unlock: 'A complete digital storefront at the lowest starting cost',
     summary: 'A simple online catalog for a small neighbourhood shop.',
@@ -118,7 +118,7 @@ const comparisonGroups = [
   {
     title: 'Plan terms',
     rows: [
-      { label: 'Billing cycle', values: ['6 months', 'Monthly', 'Monthly', 'Monthly'] },
+      { label: 'Billing cycle', values: ['Monthly', 'Monthly', 'Monthly', 'Monthly'] },
       { label: 'Amount charged per cycle', values: ['₹120', '₹199', '₹499', '₹999'] },
       { label: 'Business support', values: ['Standard', 'Standard', 'Faster', 'Priority'] },
       { label: 'Upgrade as the shop grows', values: [true, true, true, true] }
@@ -135,7 +135,7 @@ const insightItems = [
 ];
 
 const faqs = [
-  { question: 'Is there a free shop plan?', answer: 'No. Basic is the lowest-priced shop plan at ₹20 per month equivalent, purchased as ₹120 for a 6-month term.' },
+  { question: 'Is there a free shop plan?', answer: 'No. Basic is the lowest-priced shop plan at ₹120 per month.' },
   { question: 'What is not included in Basic?', answer: 'Basic does not include the Verified Shop badge or the customer activity report. It also has a maximum of 10 products.' },
   { question: 'What does the customer activity report show?', answer: 'It shows shop opens, calls, direction requests, WhatsApp chats, reviews and total interactions for this month and all time. It does not reveal customer phone numbers or personal details.' },
   { question: 'Can I change my plan later?', answer: 'Yes. You can move to a larger plan as your catalog grows. A new paid term starts when the plan change is completed.' },
@@ -196,7 +196,7 @@ export default function PricingPage({ onBack, onStart }) {
               <p className="mt-1 text-xs font-semibold leading-5 text-slate-400">Best for: {plan.bestFor}</p>
               <div className="mt-5 flex items-end gap-1"><span className="text-4xl font-black tracking-tight text-slate-950">₹{plan.price}</span><span className="pb-1 text-sm font-semibold text-slate-500">/ month</span></div>
               <p className="mt-1 text-xs font-semibold text-slate-500">{plan.billed}</p>
-              {promotion?.eligible_plans?.includes(plan.id) && Number(promotion.purchase_months) === (plan.id === 'basic' ? 6 : 1) && <p className="mt-3 rounded-xl bg-violet-100 px-3 py-2 text-xs font-black text-violet-800">+ {promotion.bonus_months} months free</p>}
+              {promotion?.eligible_plans?.includes(plan.id) && Number(promotion.purchase_months) === 1 && <p className="mt-3 rounded-xl bg-violet-100 px-3 py-2 text-xs font-black text-violet-800">Pay 1 month · get {promotion.bonus_months} months free · once per shop</p>}
               <div className="mt-5 rounded-2xl bg-slate-950 px-4 py-3 text-white"><p className="text-xs font-semibold text-slate-400">Catalog capacity</p><p className="mt-1 text-lg font-black">{plan.products} products</p></div>
               <div className="mt-4 space-y-2.5">
                 <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${plan.verified ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>{plan.verified ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}Verified badge {plan.verified ? 'included' : 'not included'}</div>

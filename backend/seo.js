@@ -126,6 +126,7 @@ function mountSeo(app, pool, { siteUrl = process.env.SITE_URL, dist = path.resol
   app.get('/', (req, res, next) => {
     const index = path.join(dist, 'index.html');
     if (!fs.existsSync(index)) return next();
+    res.set('Cache-Control', 'no-store, max-age=0');
     let html = fs.readFileSync(index, 'utf8');
     if (origin) html = html.replace('</head>', `<link rel="canonical" href="${escape(origin + '/')}"></head>`);
     else res.set('X-Robots-Tag', 'noindex');

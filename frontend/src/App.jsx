@@ -60,7 +60,7 @@ export default function App() {
   useEffect(() => { if (role !== 'admin') trackPageVisit(activeTab); }, [activeTab, role]);
 
   return (
-    <div className="min-h-screen bg-transparent pb-24 font-sans text-slate-800 flex flex-col md:pb-0">
+    <div className="flex min-h-[100dvh] flex-col bg-transparent pb-[calc(6rem+env(safe-area-inset-bottom))] font-sans text-slate-800 md:pb-0">
       {/* Navigation Bar */}
       <Navbar 
         activeTab={activeTab} 
@@ -72,7 +72,7 @@ export default function App() {
       />
 
       {/* Dynamic Content based on activeTab */}
-      <main className="flex-grow py-5 sm:py-8">
+      <main id="main-content" className="min-w-0 flex-grow py-3 sm:py-8">
         {activeTab === 'shop-directory' && <ShopDirectory onBack={() => setActiveTab(homeTab(session))} onOpenShop={shop => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} />}
         {activeTab === 'explore' && (role === 'guest' || role === 'customer') && <NearbySearch session={session} onRequireLogin={() => setActiveTab('customer-auth')} onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); }} />}
 
@@ -101,7 +101,7 @@ export default function App() {
 
         {activeTab === 'terms' && <LegalContent type="terms" onBack={() => setActiveTab('explore')} />}
 
-        {activeTab === 'report-issue' && <ReportIssue onBack={() => setActiveTab('explore')} />}
+        {activeTab === 'report-issue' && <ReportIssue session={session} role={role} onBack={() => setActiveTab(homeTab(session))} onCustomerLogin={() => { setPostLoginTab('report-issue'); setActiveTab('customer-auth'); }} onShopLogin={() => { setPostLoginTab('report-issue'); setActiveTab('my-shop'); }} />}
 
         {activeTab === 'demand' && role === 'admin' && <AdminDashboard session={session} />}
 

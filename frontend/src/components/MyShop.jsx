@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, KeyRound, Loader2, MessageCircle, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, KeyRound, Loader2, MessageCircle, MessageSquareWarning, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 import { referralFromSearch } from '../referrals.mjs';
@@ -10,9 +10,10 @@ import ShopShare from './ShopShare';
 import ShopImage from './ShopImage';
 import IndianPhoneInput from './IndianPhoneInput';
 import { indianPhoneE164 } from '../phone.mjs';
+import MyReports from './MyReports';
 
 const SUBSCRIPTION_PLANS = [
-  { id: 'basic', name: 'Basic', price: 20, limit: 10, desc: 'Minimum 6 months · ₹120 upfront · upgrade anytime' },
+  { id: 'basic', name: 'Basic', price: 120, limit: 10, desc: 'Monthly plan · upgrade anytime' },
   { id: 'pro', name: 'Pro', price: 199, limit: 100, desc: 'Monthly and total shop insights included' },
   { id: 'advance', name: 'Advance', price: 499, limit: 300, desc: 'Monthly and total shop insights included' },
   { id: 'enterprise', name: 'Enterprise', price: 999, limit: 999999, desc: 'Unlimited products, priority support & insights' }
@@ -160,6 +161,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [subscriptionQueue, setSubscriptionQueue] = useState([]);
   const [activatingQueueId, setActivatingQueueId] = useState(null);
   const [subscriptionPromotion, setSubscriptionPromotion] = useState(null);
+  const [subscriptionPromotionEligible, setSubscriptionPromotionEligible] = useState(true);
   const [subscriptionClock, setSubscriptionClock] = useState(() => Date.now());
 
   // REGISTRATION FORM WITH CATEGORY
@@ -200,7 +202,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const subscriptionDaysLeft = subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) ? Math.ceil((subscriptionEnd.getTime() - currentDate.getTime()) / 86400000) : null;
   const subscriptionIsActive = Boolean(subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) && subscriptionEnd.getTime() > currentDate.getTime());
   const subscriptionNeedsAttention = subscriptionDaysLeft == null || subscriptionDaysLeft <= 30 || shopData?.subscription_status === 'cancelled';
-  const promotionApplies = (planId) => subscriptionPromotion?.eligible_plans?.includes(planId) && Number(subscriptionPromotion.purchase_months) === (planId === 'basic' ? 6 : 1);
+  const promotionApplies = (planId) => subscriptionPromotionEligible && subscriptionPromotion?.eligible_plans?.includes(planId) && Number(subscriptionPromotion.purchase_months) === 1;
   const todayIso = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
   const stockCounts = useMemo(() => products.reduce((counts, p) => {
     const status = p.availability_status || 'available';
@@ -221,12 +223,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_BASE_URL}/api/subscriptions/promotion`, { signal: controller.signal, cache: 'no-store' })
+    const ownedShop = Boolean(shopData?.id && session?.token);
+    const url = ownedShop ? `${API_BASE_URL}/api/shops/${shopData.id}/subscription-promotion` : `${API_BASE_URL}/api/subscriptions/promotion`;
+    fetch(url, { signal: controller.signal, cache: 'no-store', headers: ownedShop ? { Authorization: `Bearer ${session.token}` } : undefined })
       .then(async (response) => response.ok ? response.json() : { promotion: null })
-      .then((data) => setSubscriptionPromotion(data.promotion || null))
-      .catch((error) => { if (error.name !== 'AbortError') setSubscriptionPromotion(null); });
+      .then((data) => { setSubscriptionPromotion(data.promotion || null); setSubscriptionPromotionEligible(data.eligible !== false); })
+      .catch((error) => { if (error.name !== 'AbortError') { setSubscriptionPromotion(null); setSubscriptionPromotionEligible(true); } });
     return () => controller.abort();
-  }, []);
+  }, [session?.token, shopData?.id]);
 
   useEffect(() => {
     if (!shopData?.id) return undefined;
@@ -267,14 +271,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const updateSubscription = async (action, plan = null) => {
     if (!shopData?.id) return;
-    if (action === 'change' && !window.confirm(`Switch to ${plan}? ${plan === 'basic' ? '₹120 for 6 months' : `₹${SUBSCRIPTION_PLANS.find(item => item.id === plan)?.price} for 1 month`}. The new plan starts immediately; remaining time on your current plan is not transferred.`)) return;
-    if (action === 'renew' && !window.confirm(`Renew the ${plan} plan? The new term will be added after the current end date.`)) return;
+    if (action === 'change' && !window.confirm(`Buy the ${plan} plan for ₹${SUBSCRIPTION_PLANS.find(item => item.id === plan)?.price}? ${subscriptionIsActive ? 'It will wait in your activation queue. Activating it replaces the remaining current term.' : 'Your shop is expired, so it will start immediately.'}`)) return;
+    if (action === 'renew' && !window.confirm(`Renew the ${plan} plan? ${subscriptionIsActive ? 'The purchase will wait safely in your activation queue until you choose to activate it.' : 'Your shop is expired, so the new term will start immediately.'}`)) return;
     if (action === 'cancel' && !window.confirm('Cancel automatic renewal? Your current plan stays active until its billing period ends.')) return;
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/subscription`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ action, plan, payment_id: action === 'cancel' ? undefined : `MOCK_PAY_${Date.now()}` }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update subscription.');
+      if (promotionApplies(plan)) setSubscriptionPromotionEligible(false);
       setShopData(data.shop);
       if (data.queued_subscription) {
         setSubscriptionQueue((items) => [...items, data.queued_subscription]);
@@ -792,7 +797,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   if (!session?.token && viewMode === 'choice') {
     return (
-      <div className="max-w-md mx-auto my-12 p-8 bg-white rounded-2xl border border-slate-200 text-center shadow-sm font-sans">
+      <div className="mx-3 my-3 max-w-md rounded-2xl border border-slate-200 bg-white p-5 text-center font-sans shadow-sm sm:mx-auto sm:my-12 sm:p-8">
         <Store className="w-12 h-12 text-emerald-600 mx-auto mb-3" />
         <h3 className="text-xl font-bold text-slate-800 mb-2">My Shop Portal</h3>
         <p className="text-sm text-slate-500 mb-6">Manage your local business & list products.</p>
@@ -818,7 +823,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   if (!session?.token && viewMode === 'login') {
     return (
-      <div className="max-w-md mx-auto my-12 p-8 bg-white border border-slate-200 rounded-2xl shadow-sm font-sans">
+      <div className="mx-3 my-3 max-w-md rounded-2xl border border-slate-200 bg-white p-5 font-sans shadow-sm sm:mx-auto sm:my-12 sm:p-8">
         <button onClick={() => setViewMode('choice')} className="text-xs text-slate-500 hover:text-slate-800 mb-4 flex items-center gap-1 cursor-pointer">
           <ArrowLeft className="w-3 h-3" /> Back
         </button>
@@ -845,7 +850,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   if (!session?.token && viewMode === 'register_wizard') {
     return (
-      <div className="max-w-2xl mx-auto my-8 p-8 bg-white border border-slate-200 rounded-2xl shadow-sm font-sans">
+      <div className="mx-3 my-3 max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 font-sans shadow-sm sm:mx-auto sm:my-8 sm:p-8">
         {wizardStep === 1 && (
           <form onSubmit={(e) => { e.preventDefault(); setErrorMsg(''); setWizardStep(2); }} className="space-y-4">
             <button type="button" onClick={() => setViewMode('choice')} className="text-xs text-slate-500 hover:text-slate-800 mb-2 flex items-center gap-1 cursor-pointer">
@@ -885,13 +890,13 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={regForm.opening_time} onChange={(e) => setRegForm({ ...regForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={regForm.closing_time} onChange={(e) => setRegForm({ ...regForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
             
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-xs font-semibold text-slate-700">Location</span>
                 <button type="button" onClick={handleGetCurrentLocation} disabled={fetchingLoc} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold cursor-pointer hover:bg-emerald-700">
                   {fetchingLoc ? 'Detecting...' : 'Use My Current Location'}
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <input type="number" step="any" required placeholder="Latitude *" value={regForm.latitude} onChange={(e) => setRegForm({ ...regForm, latitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
                 <input type="number" step="any" required placeholder="Longitude *" value={regForm.longitude} onChange={(e) => setRegForm({ ...regForm, longitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
               </div>
@@ -924,7 +929,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                   <div>
                     <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">{plan.id}</span>
                     <h4 className="font-bold text-slate-800 text-lg">{plan.name}</h4>
-                    <p className="text-2xl font-extrabold text-slate-900 my-2">₹{plan.id === 'basic' ? 120 : plan.price}<span className="text-xs font-normal text-slate-500"> / {plan.id === 'basic' ? '6 months' : 'month'}</span></p>
+                    <p className="text-2xl font-extrabold text-slate-900 my-2">₹{plan.price}<span className="text-xs font-normal text-slate-500"> / month</span></p>
                     <p className="text-xs text-slate-500 mb-3">{plan.desc}</p>
                     {promotionApplies(plan.id) && <p className="mb-3 rounded-lg bg-violet-100 px-2.5 py-2 text-xs font-black text-violet-800"><Gift className="mr-1 inline h-3.5 w-3.5" />Pay for {subscriptionPromotion.purchase_months} month · get {subscriptionPromotion.bonus_months} months free</p>}
                     <p className="text-xs text-slate-600 font-medium bg-slate-50 p-2 rounded-lg mb-4">
@@ -942,7 +947,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 </div>
               ))}
             </div>
-            {selectedSubscriptionPlan && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-bold text-slate-800">Selected: {selectedSubscriptionPlan.name} — ₹{selectedSubscriptionPlan.price}/month</p>{promotionApplies(selectedSubscriptionPlan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-xs font-black text-violet-800">{subscriptionPromotion.name}: {subscriptionPromotion.bonus_months} free months will be added automatically. Offer ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>}<p className="mt-1 text-xs text-slate-600">Basic requires a 6-month purchase. You can upgrade anytime from Billing using the same login. Cancelling renewal keeps your current term active until its end date.</p><button type="button" disabled={loading} onClick={() => handleRegisterSubmit(selectedSubscriptionPlan.id, `MOCK_PAY_${Date.now()}`)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating shop…</> : `Confirm ${selectedSubscriptionPlan.name} & create shop`}</button><p className="mt-2 text-center text-[11px] text-slate-500">Demo payment confirmation — connect a real gateway before live payments.</p></div>}
+            {selectedSubscriptionPlan && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-bold text-slate-800">Selected: {selectedSubscriptionPlan.name} — ₹{selectedSubscriptionPlan.price}/month</p>{promotionApplies(selectedSubscriptionPlan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-xs font-black text-violet-800">{subscriptionPromotion.name}: pay for {subscriptionPromotion.purchase_months} month and get {subscriptionPromotion.bonus_months} months free. Offer ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>}<p className="mt-1 text-xs text-slate-600">Every plan is billed monthly. You can upgrade anytime from Billing using the same login. Cancelling renewal keeps your current term active until its end date.</p><button type="button" disabled={loading} onClick={() => handleRegisterSubmit(selectedSubscriptionPlan.id, `MOCK_PAY_${Date.now()}`)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating shop…</> : `Confirm ${selectedSubscriptionPlan.name} & create shop`}</button><p className="mt-2 text-center text-[11px] text-slate-500">Demo payment confirmation — connect a real gateway before live payments.</p></div>}
           </div>
         )}
       </div>
@@ -962,6 +967,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 ...(hasShopInsights ? [['insights', 'Customer activity', BarChart3]] : []),
                 ['billing', 'Billing', CalendarDays],
                 ['notifications', `Notifications${shopNotifications.some((item) => !item.read_at) ? ` (${shopNotifications.filter((item) => !item.read_at).length})` : ''}`, Bell],
+                ['reports', 'Complaints', MessageSquareWarning],
                 ['security', 'Account security', KeyRound],
               ].map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
                 'flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition lg:w-full ' + (dashboardSection === id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800')
@@ -1031,6 +1037,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       {subscriptionQueue.some((item) => item.status === 'queued') && <section className="mb-5 mt-4 rounded-2xl border border-violet-200 bg-violet-50 p-5"><div className="flex items-start gap-3"><CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-violet-700" /><div><p className="font-black text-violet-950">Purchased plans waiting for activation</p><p className="mt-1 text-sm text-violet-800">Payment is recorded, but validity has not started. Activate when you are ready.</p></div></div><div className="mt-4 space-y-3">{subscriptionQueue.filter((item) => item.status === 'queued').map((item, index) => <article key={item.id} className="rounded-2xl border border-violet-200 bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold uppercase text-slate-900">{item.plan} plan <span className="text-xs font-medium normal-case text-slate-400">· Queue #{index + 1}</span></p><p className="mt-1 text-xs text-slate-500">Payment confirmed {new Date(item.payment_confirmed_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })} · {item.term_days} days</p>{Number(item.bonus_months) > 0 && <p className="mt-1 text-xs font-bold text-violet-700"><Gift className="mr-1 inline h-3 w-3" />{item.promotion_name} · {item.bonus_months} free months included</p>}</div><button type="button" disabled={activatingQueueId === item.id || index > 0} onClick={() => activateQueuedSubscription(item)} className="rounded-xl bg-violet-700 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">{activatingQueueId === item.id ? 'Activating…' : index > 0 ? 'Waiting in queue' : 'Activate now'}</button></div></article>)}</div><p className="mt-3 text-xs text-violet-700">Activating now replaces the current active term. Later queued plans remain safely in order.</p></section>}
 
       {dashboardSection === 'notifications' && <section className="mb-5 mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Shop inbox</p><h2 className="mt-2 flex items-center gap-2 text-2xl font-black text-slate-900"><Bell className="h-6 w-6 text-emerald-700" />Notifications</h2><p className="mt-1 text-sm text-slate-500">Information and renewal reminders sent by the administrator.</p></div><div className="flex gap-2"><button type="button" disabled={notificationsLoading} onClick={refreshNotifications} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600" aria-label="Refresh notifications"><RefreshCw className={`h-4 w-4 ${notificationsLoading ? 'animate-spin' : ''}`} /></button><button type="button" disabled={!shopNotifications.some((item) => !item.read_at)} onClick={markNotificationsRead} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Mark all as read</button></div></div>{notificationsError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{notificationsError}</p>}{notificationsLoading && !shopNotifications.length ? <p className="mt-6 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading notifications…</p> : !shopNotifications.length ? <div className="mt-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><Bell className="mx-auto h-7 w-7 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-600">No notifications yet</p><p className="mt-1 text-xs text-slate-400">Admin information will appear here.</p></div> : <div className="mt-6 space-y-3">{shopNotifications.map((item) => <article key={item.id} className={`rounded-2xl border p-4 ${item.read_at ? 'border-slate-200 bg-slate-50' : 'border-sky-200 bg-sky-50'}`}><div className="flex items-start justify-between gap-3"><div><p className="font-bold text-slate-900">{item.title}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.message}</p></div>{!item.read_at && <span className="shrink-0 rounded-full bg-sky-600 px-2 py-1 text-[10px] font-bold text-white">New</span>}</div><time className="mt-3 block text-xs text-slate-400">{new Date(item.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></article>)}</div>}</section>}
+      {dashboardSection === 'reports' && <div className="mb-5 mt-4"><MyReports session={session} title="Shop complaints" allowCreate /></div>}
 
       <section className={`mb-5 mt-4 rounded-2xl border p-4 ${subscriptionNeedsAttention ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3">{subscriptionNeedsAttention ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /> : <CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />}<div><p className="font-bold text-slate-900">Current plan: <span className="uppercase">{shopData?.subscription_plan || 'Basic'}</span></p><p className="mt-1 text-sm text-slate-600">{subscriptionEnd ? <>Plan ends on <strong>{subscriptionEnd.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong>{subscriptionDaysLeft <= 0 ? ' · Expired' : ` · ${subscriptionDaysLeft} days remaining`}</> : 'Plan end date is unavailable. Please renew or contact support.'}</p>{Number(shopData?.subscription_bonus_months) > 0 && <p className="mt-1 text-xs font-bold text-violet-800"><Gift className="mr-1 inline h-3.5 w-3.5" />{shopData.subscription_promotion_name || 'Promotional offer'} included {shopData.subscription_bonus_months} free months.</p>}{shopData?.subscription_status === 'cancelled' && <p className="mt-1 text-xs font-bold text-amber-800">Automatic renewal is cancelled.</p>}</div></div><div className="flex gap-2"><button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">View billing</button><button type="button" disabled={loading} onClick={() => updateSubscription('renew', shopData?.subscription_plan)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Renew plan</button></div></div></section>
       {!subscriptionIsActive && <section className="mb-5 rounded-2xl border border-rose-300 bg-rose-50 p-4"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" /><div><p className="font-black text-rose-950">Subscription access paused</p><p className="mt-1 text-sm text-rose-800">All products are now out of stock. Product and offer management is locked until this shop renews a subscription.</p><button type="button" onClick={() => setDashboardSection('billing')} className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white">Renew subscription</button></div></div></section>}
@@ -1038,8 +1045,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       {shopNotifications.some((item) => !item.read_at) && <section className="mb-5 rounded-2xl border border-sky-200 bg-sky-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><Bell className="mt-0.5 h-5 w-5 shrink-0 text-sky-700" /><div><p className="font-bold text-sky-950">Subscription notification</p>{shopNotifications.filter((item) => !item.read_at).slice(0, 3).map((item) => <div key={item.id} className="mt-2"><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{item.message}</p></div>)}</div></div><button type="button" onClick={markNotificationsRead} className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700">Mark as read</button></div></section>}
 
 
-      {dashboardSection === 'billing' && <div className="mb-4 rounded-xl border border-emerald-200 bg-white p-4 text-sm text-slate-600"><p>Basic: <strong>₹120 upfront for 6 months</strong> (₹20/month). Upgrade anytime; keep the same login.</p>{shopData?.subscription_ends_at && <p className="mt-2">Current term ends: <strong>{new Date(shopData.subscription_ends_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong></p>}<p className="mt-2 text-xs">A plan switch starts a new paid term immediately. Remaining time is not transferred to the new plan.</p></div>}
-      {dashboardSection === 'billing' && subscriptionPromotion && <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm font-bold text-violet-900"><Gift className="mr-2 inline h-4 w-4" />{subscriptionPromotion.name}: pay for {subscriptionPromotion.purchase_months} month and get {subscriptionPromotion.bonus_months} months free on {subscriptionPromotion.eligible_plans.map((plan) => plan.charAt(0).toUpperCase() + plan.slice(1)).join(', ')}. Ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</div>}
+      {dashboardSection === 'billing' && <div className="mb-4 rounded-xl border border-emerald-200 bg-white p-4 text-sm text-slate-600"><p>Basic: <strong>₹120 per month</strong>. Upgrade anytime; keep the same login.</p>{shopData?.subscription_ends_at && <p className="mt-2">Current term ends: <strong>{new Date(shopData.subscription_ends_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong></p>}<p className="mt-2 text-xs">Purchases made while a plan is active wait in the activation queue. Activating a queued plan replaces the current remaining term; expired-shop purchases start immediately.</p></div>}
+      {dashboardSection === 'billing' && subscriptionPromotion && <div className={`mb-4 rounded-xl border p-4 text-sm font-bold ${subscriptionPromotionEligible ? 'border-violet-200 bg-violet-50 text-violet-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Gift className="mr-2 inline h-4 w-4" />{subscriptionPromotionEligible ? <>{subscriptionPromotion.name}: pay for {subscriptionPromotion.purchase_months} month and get {subscriptionPromotion.bonus_months} months free on {subscriptionPromotion.eligible_plans.map((plan) => plan.charAt(0).toUpperCase() + plan.slice(1)).join(', ')}. One redemption per shop. Ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</> : <>This shop has already used {subscriptionPromotion.name}. Renewals and plan changes use the regular one-month price unless a new campaign is created.</>}</div>}
       {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p>{promotionApplies(plan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-[11px] font-black text-violet-800">+ {subscriptionPromotion.bonus_months} free months</p>}<button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
 
       {dashboardSection === 'security' && <section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><form onSubmit={handleAccountPasswordChange} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><KeyRound className="h-6 w-6 text-emerald-700" /><h2 className="mt-3 text-xl font-black text-slate-900">Change account password</h2><p className="mt-1 text-sm leading-6 text-slate-500">Use the shop owner account’s current password. A successful change signs out every device.</p>{passwordError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{passwordError}</p>}<label className="mt-5 block text-xs font-bold text-slate-600">Current password<input required type="password" autoComplete="current-password" value={accountPassword.current_password} onChange={(event) => setAccountPassword({ ...accountPassword, current_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">New password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.new_password} onChange={(event) => setAccountPassword({ ...accountPassword, new_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">Confirm new password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.confirm_password} onChange={(event) => setAccountPassword({ ...accountPassword, confirm_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><p className="mt-3 text-xs text-slate-500">Use at least 10 characters with a letter and number.</p><button disabled={passwordBusy} className="mt-5 flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{passwordBusy && <Loader2 className="h-4 w-4 animate-spin" />}{passwordBusy ? 'Updating…' : 'Update password'}</button></form><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ SMS OTP at every login</li><li>✓ SMS OTP password recovery</li><li>✓ Secure password hashing</li><li>✓ One-time verification tokens</li><li>✓ All sessions revoked after a reset</li></ul><p className="mt-5 text-xs leading-5 text-emerald-800">If you cannot remember the current password, sign out and choose <strong>Forgot password?</strong> on the login screen.</p></aside></section>}

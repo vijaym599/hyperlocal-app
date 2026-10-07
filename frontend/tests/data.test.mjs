@@ -22,6 +22,10 @@ test('restored sessions and restricted navigation resolve to the correct home', 
   assert.equal(resolveTab('shop-portfolio', null, { id: 1 }), 'shop-portfolio');
   assert.equal(resolveTab('shop-portfolio', owner, null), 'my-shop');
   assert.equal(resolveTab('privacy', admin), 'privacy');
+  assert.equal(resolveTab('report-issue', null), 'report-issue');
+  assert.equal(resolveTab('report-issue', customer), 'report-issue');
+  assert.equal(resolveTab('report-issue', owner), 'report-issue');
+  assert.equal(resolveTab('report-issue', admin), 'demand');
 });
 
 test('CSV accepts commas, escaped quotes, multiline descriptions, BOM and zero prices', () => {

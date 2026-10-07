@@ -256,6 +256,7 @@ const initDb = async () => {
     await require('./phoneVerification').initPhoneVerification(pool);
     await require('./analytics').initAnalytics(pool);
     await require('./subscriptionPromotions').initSubscriptionPromotions(pool);
+    await require('./supportReports').initSupportReports(pool);
     await require('./schemaOptimization').optimizeSchema(pool);
     console.log('PostgreSQL Tables Verified & Ready!');
   } catch (err) {

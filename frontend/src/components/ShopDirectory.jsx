@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../config';
 
 export default function ShopDirectory({ onOpenShop, onBack }) {
   const [page, setPage] = useState(1);
-  return <section className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+  return <section className="mx-auto max-w-6xl px-3 py-3 sm:px-6 sm:py-6">
     <button type="button" onClick={onBack} className="mb-5 flex items-center gap-2 text-sm font-semibold text-emerald-700"><ArrowLeft className="h-4 w-4" />Back</button>
     <h1 className="text-2xl font-extrabold text-slate-900">Browse local shop catalogs</h1>
     <p className="mt-2 text-sm text-slate-500">Choose a shop to see its products and contact details.</p>

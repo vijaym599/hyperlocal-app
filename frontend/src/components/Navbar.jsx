@@ -30,9 +30,11 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
         <div className="flex items-center justify-between h-16">
           
           {/* App Logo & Name */}
-          <div 
+          <button
+            type="button"
+            aria-label="Go to home"
             onClick={() => setActiveTab(homeTab)}
-            className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition"
+            className="flex min-h-11 items-center gap-2.5 rounded-xl text-left transition hover:opacity-90"
           >
             <div className="rounded-xl border border-white/50 bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-700 p-2 text-white shadow-lg shadow-emerald-700/20">
               <Store className="w-5 h-5" />
@@ -40,7 +42,7 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
             <span className="text-xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-600 to-teal-700 bg-clip-text text-transparent">
               Nearbuy 
             </span>
-          </div>
+          </button>
 
           {/* Desktop Navigation Links */}
           <div className={`${hasCustomerDock ? 'hidden' : 'hidden md:flex'} items-center gap-3`}>
@@ -119,8 +121,11 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
           {/* Mobile Menu Toggle Button */}
           <div className="md:hidden">
             {!hasCustomerDock && <button
+              type="button"
+              aria-label={isOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={isOpen}
               onClick={() => setIsOpen(!isOpen)}
-              className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 focus:outline-none"
+              className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 focus:outline-none"
             >
               {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>}
@@ -202,13 +207,13 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
 
     </nav>
 
-      {hasCustomerDock && <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[70] bg-gradient-to-t from-slate-950/20 via-slate-900/5 to-transparent px-3 pb-[calc(env(safe-area-inset-bottom)+0.65rem)] pt-5 md:hidden">
-        <div aria-label="Primary navigation" className="pointer-events-auto mx-auto flex h-[68px] max-w-md items-center justify-around rounded-[1.8rem] border border-white/90 bg-white/75 px-1 shadow-[0_18px_45px_rgba(15,23,42,0.28)] backdrop-blur-2xl backdrop-saturate-150 supports-[backdrop-filter]:bg-white/68">
+      {hasCustomerDock && <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[70] bg-gradient-to-t from-slate-950/20 via-slate-900/5 to-transparent px-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-5 md:hidden">
+        <div aria-label="Primary navigation" className="pointer-events-auto mx-auto flex h-[72px] max-w-md items-center justify-around rounded-[1.65rem] border border-white/90 bg-white/90 px-1 shadow-[0_18px_45px_rgba(15,23,42,0.28)] backdrop-blur-2xl backdrop-saturate-150 supports-[backdrop-filter]:bg-white/75">
           {mobileItems.map(({ id, label, icon: Icon, target, matches }) => {
             const selected = matches.includes(activeTab);
-            return <button key={id} type="button" onClick={() => navigateMobile(target)} aria-current={selected ? 'page' : undefined} className={`group flex h-full w-1/5 flex-col items-center justify-center text-center transition ${selected ? 'text-emerald-800' : 'text-slate-500'}`}>
-              <span className={`flex items-center justify-center transition-all duration-200 ${selected ? '-mt-5 h-12 w-12 rounded-full border border-emerald-300/70 bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-700 text-white ring-[5px] ring-white/85 shadow-[0_10px_25px_rgba(5,150,105,0.35)]' : 'h-8 w-8 rounded-xl group-hover:bg-white/60 group-active:scale-90'}`}><Icon className={selected ? 'h-5 w-5' : 'h-[19px] w-[19px]'} strokeWidth={selected ? 2.5 : 1.8} /></span>
-              <span className={`mt-0.5 text-[8px] font-black uppercase tracking-tight ${selected ? 'text-emerald-800' : 'text-slate-500'}`}>{label}</span>
+            return <button key={id} type="button" onClick={() => navigateMobile(target)} aria-label={label} aria-current={selected ? 'page' : undefined} className={`group flex h-full min-w-0 w-1/5 flex-col items-center justify-center rounded-2xl text-center transition active:scale-95 ${selected ? 'text-emerald-800' : 'text-slate-500'}`}>
+              <span className={`flex items-center justify-center transition-all duration-200 ${selected ? 'h-10 w-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-[0_8px_18px_rgba(5,150,105,0.3)]' : 'h-9 w-9 rounded-xl group-hover:bg-white/60'}`}><Icon className={selected ? 'h-5 w-5' : 'h-[19px] w-[19px]'} strokeWidth={selected ? 2.5 : 1.8} /></span>
+              <span className={`mt-0.5 max-w-full truncate px-0.5 text-[10px] font-bold leading-3 ${selected ? 'text-emerald-800' : 'text-slate-600'}`}>{label}</span>
             </button>;
           })}
         </div>

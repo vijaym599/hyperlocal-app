@@ -32,7 +32,7 @@ export default function Footer({ setActiveTab }) {
       <div className="pointer-events-none absolute -left-24 top-0 h-72 w-72 rounded-full bg-emerald-500/15 blur-3xl" />
       <div className="pointer-events-none absolute right-0 top-20 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
 
-      <div className="relative mx-auto max-w-7xl px-4 py-8 text-left sm:px-6 sm:py-10 lg:py-12">
+      <div className="relative mx-auto max-w-7xl px-3 py-8 text-left sm:px-6 sm:py-10 lg:py-12">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4 lg:gap-6">
           <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
             <button type="button" onClick={goTo('explore')} className="flex items-center gap-2.5 text-left">
@@ -96,7 +96,7 @@ export default function Footer({ setActiveTab }) {
             <button type="button" onClick={goTo('about')} className="px-1 hover:text-slate-300">About</button>
             <button type="button" onClick={goTo('privacy')} className="px-1 hover:text-slate-300">Privacy</button>
             <button type="button" onClick={goTo('terms')} className="px-1 hover:text-slate-300">Terms</button>
-            <button type="button" onClick={goTo('report-issue')} className="px-1 hover:text-slate-300">Report an issue</button>
+            <button type="button" onClick={goTo('report-issue')} className="px-1 hover:text-slate-300">Submit a complaint</button>
           </div>
         </div>
       </div>

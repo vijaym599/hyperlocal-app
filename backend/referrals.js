@@ -1,6 +1,6 @@
 const { randomBytes } = require('node:crypto');
 
-const PLAN_PRICES_PAISE = Object.freeze({ basic: 2000, pro: 19900, advance: 49900, enterprise: 99900 });
+const PLAN_PRICES_PAISE = Object.freeze({ basic: 12000, pro: 19900, advance: 49900, enterprise: 99900 });
 const validPhone = (phone) => /^\+?[1-9]\d{7,14}$/.test(String(phone || ''));
 const normalizeCode = (code) => String(code || '').trim().toUpperCase();
 const fail = (status, message) => Object.assign(new Error(message), { status });

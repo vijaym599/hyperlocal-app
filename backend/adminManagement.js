@@ -150,16 +150,33 @@ function mountAdminManagement(app, pool, authenticate) {
     try {
       if (!(await requireAdmin(req, res))) return;
       const promotion = validatePromotion(req.body);
-      const result = await pool.query(`UPDATE subscription_promotions SET
-        name=$1,is_active=$2,purchase_months=$3,bonus_months=$4,eligible_plans=$5,
-        starts_at=$6,ends_at=$7,updated_by=$8,updated_at=CURRENT_TIMESTAMP
-        WHERE id=1 RETURNING id,name,is_active,purchase_months,bonus_months,eligible_plans,starts_at,ends_at,updated_at`,
+      const result = await pool.query(`INSERT INTO subscription_promotions
+        (id,name,is_active,is_deleted,campaign_version,purchase_months,bonus_months,eligible_plans,starts_at,ends_at,updated_by,updated_at)
+        VALUES (1,$1,$2,FALSE,1,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,is_active=EXCLUDED.is_active,
+          is_deleted=FALSE,campaign_version=CASE WHEN subscription_promotions.is_deleted
+            THEN subscription_promotions.campaign_version + 1 ELSE subscription_promotions.campaign_version END,
+          purchase_months=EXCLUDED.purchase_months,bonus_months=EXCLUDED.bonus_months,
+          eligible_plans=EXCLUDED.eligible_plans,starts_at=EXCLUDED.starts_at,ends_at=EXCLUDED.ends_at,
+          updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP
+        RETURNING id,name,is_active,campaign_version,purchase_months,bonus_months,eligible_plans,starts_at,ends_at,updated_at`,
       [promotion.name, promotion.isActive, promotion.purchaseMonths, promotion.bonusMonths, promotion.eligiblePlans, promotion.startsAt, promotion.endsAt, req.user.userId]);
       return res.json({ message: promotion.isActive ? 'Subscription offer saved and enabled.' : 'Subscription offer saved but disabled.', promotion: serializePromotion(result.rows[0]) });
     } catch (error) {
       if (error.status) return res.status(error.status).json({ error: error.message });
       console.error('Admin subscription promotion update failed:', error.message);
       return res.status(500).json({ error: 'Unable to save the subscription offer.' });
+    }
+  });
+
+  app.delete('/api/admin/subscription-promotion', authenticate, async (req, res) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      await pool.query('UPDATE subscription_promotions SET is_active=FALSE,is_deleted=TRUE,updated_by=$1,updated_at=CURRENT_TIMESTAMP WHERE id=1', [req.user.userId]);
+      return res.json({ message: 'Subscription offer removed.', promotion: null });
+    } catch (error) {
+      console.error('Admin subscription promotion removal failed:', error.message);
+      return res.status(500).json({ error: 'Unable to remove the subscription offer.' });
     }
   });
 

@@ -75,25 +75,29 @@ test('admin can list subscription attention shops and send one renewal reminder'
   });
 });
 
-test('admin can schedule and enable the launch subscription offer', async () => {
+test('admin can manage and remove the annual subscription offer', async () => {
   const updates = [];
-  const promotion = { id: 1, name: 'Launch offer', is_active: true, purchase_months: 1, bonus_months: 6, eligible_plans: ['pro', 'advance', 'enterprise'], starts_at: '2026-10-01T00:00:00.000Z', ends_at: '2026-12-01T00:00:00.000Z', updated_at: '2026-10-07T00:00:00.000Z' };
+  const promotion = { id: 1, name: '2027 Annual Offer', is_active: true, purchase_months: 1, bonus_months: 11, eligible_plans: ['basic', 'pro', 'advance', 'enterprise'], starts_at: '2026-10-01T00:00:00.000Z', ends_at: '2027-12-31T18:30:00.000Z', updated_at: '2026-10-07T00:00:00.000Z' };
   const pool = { query: async (sql, values = []) => {
     if (sql.startsWith('SELECT is_admin')) return { rows: [{ is_admin: true }] };
     if (sql.includes('FROM subscription_promotions')) return { rows: [promotion] };
-    if (sql.startsWith('UPDATE subscription_promotions')) { updates.push(values); return { rows: [promotion] }; }
+    if (sql.startsWith('INSERT INTO subscription_promotions')) { updates.push(values); return { rows: [promotion] }; }
+    if (sql.startsWith('UPDATE subscription_promotions SET is_active=FALSE')) return { rows: [] };
     throw new Error(`Unexpected query: ${sql}`);
   } };
   await withServer(pool, async (base, token) => {
     const headers = { Authorization: `Bearer ${token(9)}`, 'Content-Type': 'application/json' };
     const current = await fetch(`${base}/api/admin/subscription-promotion`, { headers });
     assert.equal(current.status, 200);
-    assert.equal((await current.json()).promotion.bonus_months, 6);
+    assert.equal((await current.json()).promotion.bonus_months, 11);
     const response = await fetch(`${base}/api/admin/subscription-promotion`, { method: 'PUT', headers, body: JSON.stringify(promotion) });
     assert.equal(response.status, 200);
     assert.match((await response.json()).message, /enabled/i);
-    assert.deepEqual(updates[0].slice(0, 5), ['Launch offer', true, 1, 6, ['pro', 'advance', 'enterprise']]);
+    assert.deepEqual(updates[0].slice(0, 5), ['2027 Annual Offer', true, 1, 11, ['basic', 'pro', 'advance', 'enterprise']]);
     assert.equal(updates[0][7], 9);
+    const removed = await fetch(`${base}/api/admin/subscription-promotion`, { method: 'DELETE', headers });
+    assert.equal(removed.status, 200);
+    assert.equal((await removed.json()).promotion, null);
   });
 });
 
