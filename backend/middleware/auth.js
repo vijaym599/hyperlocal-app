@@ -1,10 +1,12 @@
 const jwt = require('jsonwebtoken');
+const { securityEvent } = require('../security');
 
 const authenticate = (req, res, next) => {
   const authorization = req.get('authorization') || '';
   const [scheme, token] = authorization.split(' ');
 
   if (scheme !== 'Bearer' || !token) {
+    securityEvent(req, 'authentication_missing');
     return res.status(401).json({ error: 'Authentication is required for this action.' });
   }
 
@@ -14,9 +16,12 @@ const authenticate = (req, res, next) => {
   }
 
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    if (!Number.isSafeInteger(Number(req.user.userId)) || Number(req.user.userId) < 1) throw new Error('Invalid token subject.');
+    req.user.userId = Number(req.user.userId);
     return next();
   } catch {
+    securityEvent(req, 'authentication_invalid');
     return res.status(401).json({ error: 'Your session is invalid or has expired. Please sign in again.' });
   }
 };

@@ -6,6 +6,7 @@ const production = {
   NODE_ENV: 'production', JWT_SECRET: 'a'.repeat(64), SITE_URL: 'https://nearbuy.test',
   DATABASE_URL: 'postgresql://owner:secret@db.test/nearbuy',
   GEOCODER_USER_AGENT: 'Nearbuy/1.0 (support@nearbuy.test)',
+  PHONE_OTP_PROVIDER: 'twilio', TWILIO_ACCOUNT_SID: 'AC-test', TWILIO_AUTH_TOKEN: 'token-test', TWILIO_VERIFY_SERVICE_SID: 'VA-test',
 };
 test('production rejects missing secrets, example domains and incomplete database setup', () => {
   assert.doesNotThrow(() => validateProduction(production));
@@ -13,6 +14,8 @@ test('production rejects missing secrets, example domains and incomplete databas
     { JWT_SECRET: 'short' }, { SITE_URL: 'https://yourdomain.in' },
     { SITE_URL: 'http://nearbuy.test' }, { SITE_URL: 'https://nearbuy.test/path' },
     { DATABASE_URL: '' }, { GEOCODER_USER_AGENT: 'Nearbuy/1.0 (support@example.com)' },
+    { PHONE_OTP_PROVIDER: 'development' }, { TWILIO_AUTH_TOKEN: '' },
+    { CORS_ORIGIN: 'http://nearbuy.test' }, { CORS_ORIGIN: '*' },
   ]) assert.throws(() => validateProduction({ ...production, ...change }));
   assert.doesNotThrow(() => validateProduction({ NODE_ENV: 'development' }));
 });

@@ -1,6 +1,7 @@
 const { randomBytes } = require('node:crypto');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { PASSWORD_REQUIREMENT, isStrongPassword } = require('./passwordPolicy');
 
 const normalizePhone = (value) => {
   const compact = String(value || '').trim().replace(/[\s().-]/g, '');
@@ -82,7 +83,7 @@ async function issuePurposeToken(pool, phone, purpose, env = process.env) {
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await pool.query('DELETE FROM phone_verification_claims WHERE expires_at < CURRENT_TIMESTAMP - INTERVAL \'1 day\'');
   await pool.query('INSERT INTO phone_verification_claims(id,phone,expires_at) VALUES($1,$2,$3)', [id, phone, expiresAt]);
-  const token = jwt.sign({ purpose, phone, jti: id }, env.JWT_SECRET, { expiresIn: '10m' });
+  const token = jwt.sign({ purpose, phone, jti: id }, env.JWT_SECRET, { algorithm: 'HS256', expiresIn: '10m' });
   return { token, expiresAt };
 }
 
@@ -93,7 +94,7 @@ const issueLoginVerificationToken = (pool, phone, env = process.env) => issuePur
 function verifyPurposeToken(token, phone, purpose, env = process.env) {
   if (!token || !env.JWT_SECRET) throw failure(403, 'Verification expired or is invalid. Send a new code.');
   let claim;
-  try { claim = jwt.verify(token, env.JWT_SECRET); }
+  try { claim = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }); }
   catch { throw failure(403, 'Verification expired or is invalid. Send a new code.'); }
   if (claim.purpose !== purpose || claim.phone !== phone || !claim.jti) throw failure(403, 'Verification expired or is invalid. Send a new code.');
   return claim;
@@ -188,7 +189,7 @@ function mountPhoneVerification(app, pool, rateLimit) {
       const phone = normalizePhone(req.body?.phone);
       const password = String(req.body?.new_password || '');
       if (!isValidPhone(phone)) throw failure(400, 'Enter a valid account phone number.');
-      if (password.length < 10 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) throw failure(400, 'New password must have at least 10 characters with a letter and number.');
+      if (!isStrongPassword(password)) throw failure(400, PASSWORD_REQUIREMENT);
       const hash = await bcrypt.hash(password, 12);
       await resetPasswordWithToken(pool, req.body?.reset_token, phone, hash);
       return res.set('Cache-Control', 'no-store').json({ message: 'Password reset successfully. Sign in with your new password.' });

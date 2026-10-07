@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const { PASSWORD_REQUIREMENT, isUsablePasswordInput, isStrongPassword } = require('./passwordPolicy');
 
 const validEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -42,9 +43,8 @@ function mountAccount(app, pool, authenticate, rateLimit) {
   app.post('/api/account/password', authenticate, rateLimit(5, 60 * 60 * 1000, 'account-password'), async (req, res) => {
     const currentPassword = String(req.body?.current_password || '');
     const newPassword = String(req.body?.new_password || '');
-    if (newPassword.length < 10 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
-      return res.status(400).json({ error: 'New password must have at least 10 characters with a letter and number.' });
-    }
+    if (!isStrongPassword(newPassword)) return res.status(400).json({ error: PASSWORD_REQUIREMENT });
+    if (!isUsablePasswordInput(currentPassword)) return res.status(401).json({ error: 'Current password is incorrect.' });
     if (currentPassword === newPassword) return res.status(400).json({ error: 'Choose a different new password.' });
     try {
       const current = await pool.query('SELECT password FROM users WHERE id=$1', [req.user.userId]);

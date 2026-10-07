@@ -71,18 +71,18 @@ test('PostgreSQL referral registration, admin review and concurrent redemption w
     const signup = async (phone, referralCode = code, plan = 'pro') => {
       const verificationToken = await verifyPhone(phone);
       return post('/api/auth/register-shop', null, {
-        owner_name: 'Shop owner', account_phone: phone, password: 'test-password', shop_name: 'Corner shop',
+        owner_name: 'Shop owner', account_phone: phone, password: 'TestPassword1', shop_name: 'Corner shop',
         latitude: 13.08, longitude: 80.27, selected_plan: plan, payment_id: 'MOCK_PAY_LOCAL', referral_code: referralCode,
         phone_verification_token: verificationToken, reward_paise: 99999999, user_id: 3,
       });
     };
-    assert.equal((await post('/api/auth/register-shop', null, { account_phone: '+919000000099', password: 'test-password', shop_name: 'Unverified', selected_plan: 'pro', payment_id: 'MOCK_PAY_LOCAL', latitude: 13, longitude: 80 })).status, 403);
-    assert.equal((await post('/api/auth/register-customer', null, { name: 'Unverified', phone: '+919000000020', password: 'test-password' })).status, 403);
+    assert.equal((await post('/api/auth/register-shop', null, { account_phone: '+919000000099', password: 'TestPassword1', shop_name: 'Unverified', selected_plan: 'pro', payment_id: 'MOCK_PAY_LOCAL', latitude: 13, longitude: 80 })).status, 403);
+    assert.equal((await post('/api/auth/register-customer', null, { name: 'Unverified', phone: '+919000000020', password: 'TestPassword1' })).status, 403);
     const customerVerification = await verifyPhone('+919000000020');
-    const customer = await post('/api/auth/register-customer', null, { name: 'Verified customer', phone: '+919000000020', password: 'test-password', phone_verification_token: customerVerification });
+    const customer = await post('/api/auth/register-customer', null, { name: 'Verified customer', phone: '+919000000020', password: 'TestPassword1', phone_verification_token: customerVerification });
     assert.equal(customer.status, 201);
     assert.equal(customer.body.user.phone_verified, true);
-    assert.equal((await post('/api/auth/register-customer', null, { name: 'Reuse', phone: '+919000000020', password: 'test-password', phone_verification_token: customerVerification })).status, 403);
+    assert.equal((await post('/api/auth/register-customer', null, { name: 'Reuse', phone: '+919000000020', password: 'TestPassword1', phone_verification_token: customerVerification })).status, 403);
     const invalid = await signup('+919000000011', 'NB' + 'F'.repeat(24));
     assert.equal(invalid.status, 400);
     assert.equal((await pool.query('SELECT id FROM users WHERE phone=$1', ['+919000000011'])).rows.length, 0, 'invalid referral must roll back registration');

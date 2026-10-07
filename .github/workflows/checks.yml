@@ -37,6 +37,8 @@ jobs:
             backend/package-lock.json
       - run: npm ci --prefix frontend
       - run: npm ci --prefix backend
+      - run: npm --prefix frontend audit --omit=dev
+      - run: npm --prefix backend audit --omit=dev
       - run: npm run lint
       - run: npm test
       - run: npm run build

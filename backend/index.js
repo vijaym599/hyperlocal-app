@@ -16,6 +16,8 @@ const { mountAccount } = require('./account');
 const { getPromotion, getShopPromotion, promotedSubscriptionTerms, claimPromotionRedemption } = require('./subscriptionPromotions');
 const { mountCustomerAssistant } = require('./customerAssistant');
 const { mountSupportReports } = require('./supportReports');
+const { requestId, securityHeaders, securityEvent, notFound, handleError } = require('./security');
+const { PASSWORD_REQUIREMENT, isUsablePasswordInput, isStrongPassword } = require('./passwordPolicy');
 
 const app = express();
 const authenticate = withAccountValidation(pool);
@@ -24,13 +26,8 @@ const allowedOrigins = String(process.env.CORS_ORIGIN || '').split(',').map((ori
 const rateLimitStore = new Map();
 app.disable('x-powered-by');
 app.set('trust proxy', trustProxy(process.env.TRUST_PROXY));
-app.use((req, res, next) => {
-  res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.set('X-Frame-Options', 'DENY');
-  if (process.env.NODE_ENV === 'production') res.set('Strict-Transport-Security', 'max-age=31536000');
-  next();
-});
+app.use(requestId);
+app.use(securityHeaders);
 
 app.get('/api/health', async (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -46,7 +43,7 @@ app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : (process.env.NODE_ENV === 'production' ? false : true),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '2mb', strict: true }));
 
 const rateLimit = (limit, windowMs, scope = '') => (req, res, next) => {
   const key = `${req.ip}:${scope || req.baseUrl}`;
@@ -56,7 +53,11 @@ const rateLimit = (limit, windowMs, scope = '') => (req, res, next) => {
     rateLimitStore.set(key, { count: 1, resetAt: now + windowMs });
     return next();
   }
-  if (entry.count >= limit) return res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+  if (entry.count >= limit) {
+    securityEvent(req, 'rate_limit_exceeded', { scope: scope || req.baseUrl });
+    res.set('Retry-After', String(Math.max(1, Math.ceil((entry.resetAt - now) / 1000))));
+    return res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+  }
   entry.count += 1;
   return next();
 };
@@ -109,7 +110,7 @@ const createToken = (user) => {
   return jwt.sign(
     { userId: user.id, phone: user.phone, userType: user.user_type || 'customer', isAdmin: Boolean(user.is_admin), authVersion: Number(user.auth_version || 1) },
     process.env.JWT_SECRET,
-    { expiresIn: '7d' }
+    { algorithm: 'HS256', expiresIn: '24h' }
   );
 };
 
@@ -265,9 +266,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
       return res.status(400).json({ error: 'Choose one of the four subscription plans to create a shop account.' });
     }
 
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must contain at least 8 characters.' });
-    }
+    if (!isStrongPassword(password)) return res.status(400).json({ error: PASSWORD_REQUIREMENT });
 
     const cleanPhone = normalizePhone(account_phone);
     const cleanEmail = String(email || '').trim().toLowerCase() || null;
@@ -369,7 +368,8 @@ const registerCustomer = async (req, res) => {
     const phone = normalizePhone(req.body?.phone);
     const email = String(req.body?.email || '').trim().toLowerCase() || null;
     const password = String(req.body?.password || '');
-    if (!name || !isValidPhone(phone) || password.length < 8) return res.status(400).json({ error: 'Name, valid phone number, and a password of at least 8 characters are required.' });
+    if (!name || name.length > 120 || !isValidPhone(phone)) return res.status(400).json({ error: 'A name of 1 to 120 characters and a valid phone number are required.' });
+    if (!isStrongPassword(password)) return res.status(400).json({ error: PASSWORD_REQUIREMENT });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
     client = await pool.connect();
     await client.query('BEGIN');
@@ -407,7 +407,7 @@ app.post('/api/auth/login', async (req, res) => {
   const phone = normalizePhone(req.body?.phone);
   const { password } = req.body;
 
-  if (!isValidPhone(phone) || !password) {
+  if (!isValidPhone(phone) || !isUsablePasswordInput(password)) {
     return res.status(400).json({ error: 'Phone number and password are required.' });
   }
   if (!process.env.JWT_SECRET) {
@@ -423,17 +423,10 @@ app.post('/api/auth/login', async (req, res) => {
     const user = userRes.rows[0];
     const storedPassword = user.password || '';
     const isBcryptHash = /^\$2[aby]\$\d{2}\$/.test(storedPassword);
-    const passwordMatches = isBcryptHash
-      ? await bcrypt.compare(password, storedPassword)
-      : password === storedPassword;
+    const passwordMatches = isBcryptHash && await bcrypt.compare(password, storedPassword);
 
     if (!passwordMatches) {
       return res.status(401).json({ error: 'Invalid phone number or password.' });
-    }
-
-    // Upgrade legacy plaintext passwords on the account's next successful login.
-    if (!isBcryptHash) {
-      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [await bcrypt.hash(password, 12), user.id]);
     }
 
     const verification = await startVerification(phone);
@@ -503,7 +496,7 @@ app.get('/api/shops/:shopId/products', async (req, res) => {
       `SELECT p.*,
         COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
         (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count
-       FROM products p WHERE p.shop_id = $1 ORDER BY p.id DESC`,
+       FROM products p WHERE p.shop_id = $1 ORDER BY p.id DESC LIMIT 1000`,
       [shopId]
     );
     return res.json({ products: productsRes.rows });
@@ -731,17 +724,21 @@ app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
     const limit = SUBSCRIPTION_LIMITS[shop.subscription_plan] || 10;
     if (existingCount + incoming.length > limit) return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
     const values = incoming.map((item, index) => {
-      if (!item || !validProductText(item) || !validProductPrice(item.price)) throw new Error(`Row ${index + 1} needs a product name and valid price.`);
+      if (!item || !validProductText(item) || !validProductPrice(item.price)) throw Object.assign(new Error(`Row ${index + 1} needs a product name and valid price.`), { name: 'ProductInputError' });
       const name = item.name.trim(); const price = Number(item.price);
-      const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw new Error(`Row ${index + 1} has an invalid availability status.`);
-      if (hasOversizedImagePayload(item.image_url)) throw new Error(`Row ${index + 1} has an image that is too large.`);
+      const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw Object.assign(new Error(`Row ${index + 1} has an invalid availability status.`), { name: 'ProductInputError' });
+      if (hasOversizedImagePayload(item.image_url)) throw Object.assign(new Error(`Row ${index + 1} has an image that is too large.`), { name: 'ProductInputError' });
       const brand = String(item.brand || '').trim(); const image = String(item.image_url || '').trim() || productFallbackImage(name, brand);
       return [shopId, name, String(item.description || '').trim() || null, brand || null, price, image, status];
     });
     const placeholders = values.map((_, index) => `($${index * 7 + 1}, $${index * 7 + 2}, $${index * 7 + 3}, $${index * 7 + 4}, $${index * 7 + 5}, $${index * 7 + 6}, $${index * 7 + 7})`).join(', ');
     const result = await pool.query(`INSERT INTO products (shop_id, name, description, brand, price, image_url, availability_status) VALUES ${placeholders} RETURNING *`, values.flat());
     return res.status(201).json({ message: `${result.rows.length} products added.`, products: result.rows });
-  } catch (err) { return res.status(400).json({ error: err.message || 'Bulk upload failed.' }); }
+  } catch (err) {
+    if (err.name === 'ProductInputError') return res.status(400).json({ error: err.message });
+    console.error('Bulk product upload failed:', err.message);
+    return res.status(500).json({ error: 'Unable to upload products.' });
+  }
 });
 
 // ==========================================
@@ -810,7 +807,7 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
     return res.json({ message: 'Shop details updated successfully.', shop: result.rows[0] });
   } catch (err) {
     console.error('Update Shop Error:', err);
-    return res.status(500).json({ error: 'Failed to update shop details: ' + err.message });
+    return res.status(500).json({ error: 'Unable to update shop details.' });
   }
 });
 
@@ -923,7 +920,7 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
 
   } catch (err) {
     console.error('Error updating product:', err);
-    return res.status(500).json({ error: 'Failed to update product in database: ' + err.message });
+    return res.status(500).json({ error: 'Unable to update product.' });
   }
 });
 
@@ -1471,6 +1468,7 @@ const handleExploreOrNearby = async (req, res) => {
       FROM shops s
       LEFT JOIN products p ON s.id = p.shop_id
       ORDER BY s.id DESC, p.id DESC
+      LIMIT 1000
     `;
 
     const result = await pool.query(query);
@@ -1532,9 +1530,8 @@ app.get('/api/shops/nearby-products', handleExploreOrNearby);
 mountReferrals(app, pool, authenticate);
 require('./seo').mountSeo(app, pool);
 
-app.use((req, res) => {
-  res.status(404).json({ error: `API Route Not Found: [${req.method}] ${req.originalUrl}` });
-});
+app.use(notFound);
+app.use(handleError);
 
 const startServer = async () => {
   try {

@@ -50,12 +50,15 @@ docker build -t nearbuy .
 docker run --init --restart unless-stopped --env-file backend/.env -p 127.0.0.1:5000:5000 nearbuy
 ```
 
+For the hardened single-host runtime profile, use `docker compose -f compose.production.yml up -d --build`. It adds a read-only filesystem, dropped capabilities, no-new-privileges, bounded resources and log rotation. Keep port 5000 bound to loopback and publish the application only through the HTTPS reverse proxy.
+
 Use a separately prepared production environment file for that command, or host-injected environment variables. The example assumes an HTTPS reverse proxy on the same host. A database on the host cannot be addressed as `localhost` from inside the container; use the actual reachable database hostname. Image builds exclude local secrets.
 
 ## Checks after hosting
 
 ```powershell
 npm run smoke -- https://your-actual-domain
+npm run security:smoke -- https://your-actual-domain
 ```
 
 This reads the database health, homepage, built asset, robots, sitemap, directory and a missing product. It does not create accounts or modify data. Then manually check mobile GPS/area lookup, existing customer/owner login, product editing/images/CSV, reviews, contact links and admin permissions. Test a real shop/product URL with JavaScript disabled. See SEO_SETUP.md for Search Console setup.

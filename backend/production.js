@@ -31,6 +31,13 @@ function validateProduction(env = process.env) {
   if (!env.GEOCODER_USER_AGENT || /example\.com/.test(env.GEOCODER_USER_AGENT)) {
     throw new Error('Configure GEOCODER_USER_AGENT with a real support contact.');
   }
+  if (env.PHONE_OTP_PROVIDER !== 'twilio' || !env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_VERIFY_SERVICE_SID) {
+    throw new Error('Production requires a fully configured Twilio Verify provider.');
+  }
+  for (const value of String(env.CORS_ORIGIN || '').split(',').map((item) => item.trim()).filter(Boolean)) {
+    const origin = new URL(value);
+    if (origin.protocol !== 'https:' || origin.origin !== value || origin.username || origin.password) throw new Error('CORS_ORIGIN must contain only exact HTTPS origins.');
+  }
 }
 
 function trustProxy(value = '') {

@@ -8,6 +8,7 @@
     "lint": "npm --prefix frontend run lint",
     "start": "npm --prefix backend start",
     "smoke": "node scripts/smoke.mjs",
+    "security:smoke": "node scripts/security-smoke.mjs",
     "db:inspect": "node scripts/database-maintenance.js inspect",
     "db:reset": "node scripts/database-maintenance.js backup-reset",
     "db:verify": "node scripts/verify-database-schema.js",
