@@ -22,6 +22,7 @@ const initDb = async () => {
         is_admin BOOLEAN NOT NULL DEFAULT FALSE,
         auth_version INTEGER NOT NULL DEFAULT 1,
         password_changed_at TIMESTAMP,
+        phone_changed_at TIMESTAMPTZ,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -186,7 +187,8 @@ const initDb = async () => {
         ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMP,
         ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1,
-        ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
+        ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS phone_changed_at TIMESTAMPTZ;
 
       ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique_idx
