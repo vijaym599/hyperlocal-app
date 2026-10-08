@@ -72,11 +72,11 @@ test('PostgreSQL referral registration, admin review and concurrent redemption w
       const verificationToken = await verifyPhone(phone);
       return post('/api/auth/register-shop', null, {
         owner_name: 'Shop owner', account_phone: phone, password: 'TestPassword1', shop_name: 'Corner shop',
-        latitude: 13.08, longitude: 80.27, selected_plan: plan, payment_id: 'MOCK_PAY_LOCAL', referral_code: referralCode,
+        latitude: 13.08, longitude: 80.27, phone: '9000000010', selected_plan: plan, payment_id: 'MOCK_PAY_LOCAL', referral_code: referralCode,
         phone_verification_token: verificationToken, reward_paise: 99999999, user_id: 3,
       });
     };
-    assert.equal((await post('/api/auth/register-shop', null, { account_phone: '+919000000099', password: 'TestPassword1', shop_name: 'Unverified', selected_plan: 'pro', payment_id: 'MOCK_PAY_LOCAL', latitude: 13, longitude: 80 })).status, 403);
+    assert.equal((await post('/api/auth/register-shop', null, { account_phone: '+919000000099', password: 'TestPassword1', shop_name: 'Unverified', phone: '9000000099', selected_plan: 'pro', payment_id: 'MOCK_PAY_LOCAL', latitude: 13, longitude: 80 })).status, 403);
     assert.equal((await post('/api/auth/register-customer', null, { name: 'Unverified', phone: '+919000000020', password: 'TestPassword1' })).status, 403);
     const customerVerification = await verifyPhone('+919000000020');
     const customer = await post('/api/auth/register-customer', null, { name: 'Verified customer', phone: '+919000000020', password: 'TestPassword1', phone_verification_token: customerVerification });

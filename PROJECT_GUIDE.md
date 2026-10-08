@@ -2,7 +2,7 @@
 
 Referral rewards and redemption were added after the original review. See [REFERRALS.md](REFERRALS.md) for the customer/admin flow, additive tables, one-time 20% calculation, payout statuses and gateway boundary. Customer activity now includes referral wallets; admin demand operations include referral verification and redemption review.
 
-Customer and shop-owner signup, every login, and password recovery require SMS OTP verification. See [PHONE_VERIFICATION.md](PHONE_VERIFICATION.md) for the purpose-bound one-time token model and provider configuration.
+Customer and shop-owner signup, password changes, and password recovery require SMS OTP verification. Regular login uses the registered phone number and password without OTP. See [PHONE_VERIFICATION.md](PHONE_VERIFICATION.md) for the purpose-bound one-time token model and provider configuration.
 
 Reviewed on 2026-10-01. This guide records the current source implementation and is a starting point for future changes. Live database contents, browser behavior, deployment, and third-party service availability were not verified.
 
@@ -24,10 +24,10 @@ Nearbuy connects customers to products and shops near their location. Customers 
 | --- | --- |
 | Guest | GPS discovery, search, category/radius/stock filters, suggestions, product details, public reviews, portfolios, offers, favorites, sharing, contact/directions, product demand requests, registration/login |
 | Customer | Guest discovery features plus posting/updating reviews and viewing personal activity |
-| Shop owner | Shop registration wizard/login, profile/location/contact/hours editing, product CRUD and stock updates, CSV import, optimized image uploads, offer CRUD and activation, demo subscriptions, Pro-and-above engagement insights |
+| Shop owner | Shop registration wizard/login, profile/location/contact/hours editing, product CRUD and stock updates, CSV import, optimized image uploads, offer CRUD and activation, demo subscriptions, all-plan engagement insights and nearby customer demand |
 | Admin | Demand summaries/metrics, request status management, and shop verification |
 
-Customer and shop-owner accounts share the users table and login endpoint. There is no UI/API for creating an admin: access comes from the database `users.is_admin` flag. Phone verification fields exist, but OTP verification and password recovery are not implemented. Forgot-password buttons display a future-feature notice.
+Customer and shop-owner accounts share the users table and login endpoint. There is no UI/API for creating an admin: access comes from the database `users.is_admin` flag. Signup and password changes/resets require a one-time SMS OTP; normal login uses phone and password.
 
 ## Source map
 
@@ -54,7 +54,7 @@ Customer and shop-owner accounts share the users table and login endpoint. There
 1. Explore immediately shows skeleton cards on a first visit. A valid first-page cache displays cards immediately with an updating label while the API refreshes price and stock. Snapshots expire after 30 minutes, are scoped to the API server, and omit inline image data. A cached manual area is reused; GPS is refreshed for cached GPS locations. Without GPS, the user can explicitly search an Indian area or pincode and choose a match.
 2. `/api/search/products` returns 10 products by default, with `page`, `page_size`, `has_more`, and `next_page`. `limit` supports 1 to 48; page/category/coordinates are validated. Category filtering occurs before SQL pagination. Blank radius means 1200 km; text matches name/brand/description/shop name. Ordering is availability, distance, price, then product ID. The frontend shows one 10-product page with Previous/Next controls and derives shop cards from the current product page. Counts describe the current page. Query typing is debounced 250 ms; initial/filter loads start immediately. Cancellation, versions, and result keys prevent stale responses or mismatched locations/filters from displaying.
 3. Suggestions require two characters and return up to eight available product/brand matches. `backend/geocoder.js` handles reverse lookup and explicit area search with shared request spacing, bounded 30-minute caches, timeouts, and configurable provider URLs. `/api/location/search` first tries Nominatim and falls back to Photon when the primary provider denies or returns no results; results are restricted to India. Lookup runs only on form submission. The UI includes OpenStreetMap attribution. Provider references: [Nominatim search API](https://nominatim.org/release-docs/latest/api/Search/) and [usage policy](https://operations.osmfoundation.org/policies/nominatim/).
-4. Customer reviews are upserted per customer and target. Review writes and signed-in contact/catalog interactions create activity records. Owner insights aggregate these records; guest interactions are not included, and offers-page contact links do not record activity.
+4. Customer reviews are upserted per customer and target. Reviews, catalog/product views, searches, favorites, shares, calls, WhatsApp and directions create activity records. Guest events use an anonymous visitor UUID; signed-in customer events also retain the customer ID. Owner insights aggregate both and refresh every 30 seconds. Offer-page contact actions are included.
 5. Owner registration creates the user and shop in a database transaction, then returns a seven-day JWT. Product/offer mutations check ownership against the database; admin routes check `is_admin` against the database.
 6. Uploaded images are resized in browser canvas to at most 1200 pixels on the longest edge and exported as WebP up to approximately 1.2 MB. The data URL is stored in PostgreSQL `products.image_url`. There is no object-storage upload service. Missing images use external fallback URLs.
 7. CSV is parsed in the browser with quoted-field, escaped-quote, multiline, and BOM support in `frontend/src/csv.mjs`, then posted as a JSON array. Invalid rows and blank prices are rejected; zero prices are accepted. The API accepts 1–200 rows and inserts them in one SQL statement after validation and a plan-limit check.
@@ -71,7 +71,7 @@ Customer and shop-owner accounts share the users table and login endpoint. There
 | `shop_offers` | Shop FK, title/details/discount, optional expiry date, active status |
 | `shop_reviews` | Shop/user FKs, rating 1–5, comment; unique shop/user pair |
 | `product_reviews` | Product/user FKs, rating 1–5, comment; unique product/user pair |
-| `user_activities` | User FK, optional shop/product FKs, action, JSONB details, creation time |
+| `user_activities` | Optional user FK or anonymous visitor UUID, optional shop/product FKs, action, JSONB details, creation time |
 
 User deletion cascades to owned shops and reviews; shop deletion cascades to products/offers/reviews. Activities retain records with null shop/product references after those targets are deleted. There is no active separate subscriptions table and no active PostGIS requirement. Legacy route files refer to both.
 
@@ -91,9 +91,9 @@ All paths below are relative to `/api`.
 | Offers | GET `/offers` | Public; up to 100 active, unexpired offers, without geographic filtering |
 | Offer management | GET/POST `/shops/:shopId/offers`; PATCH/DELETE `/offers/:offerId` | Authenticated owner |
 | Reviews | GET/POST `/reviews/:target/:id`, target `shop` or `product` | Public reads; customer-only writes |
-| Activity | POST `/activity/:action`; GET `/activity` | Customer only; latest 100 on reads |
-| Insights | GET `/shops/:shopId/insights?period=monthly|total` | Owner; Pro/Advance/Enterprise |
-| Demand | POST `/product-requests` | Public, rate limited |
+| Activity | POST `/activity/:action`; GET `/activity` | Public writes with visitor UUID; customer-authenticated latest 100 reads |
+| Insights | GET `/shops/:shopId/insights?period=monthly|total` | Authenticated owner; every plan |
+| Demand | POST `/product-requests`; GET `/shops/:shopId/product-requests` | Public create, rate limited; owner reads matching nearby demand |
 | Admin | GET `/admin/product-requests`; PATCH `/admin/product-requests/:requestId`, `/admin/shops/:shopId/verification` | Admin |
 | Compatibility feeds | GET `/explore`, `/shops/nearby-products` | Public; full nested catalog, no actual radius filtering |
 
@@ -103,7 +103,7 @@ Most queries use bound SQL parameters. Dynamic review table names are chosen fro
 
 | Plan | Displayed monthly price | Product limit | Verified badge / insights |
 | --- | --- | --- | --- |
-| Basic | INR 20 | 10 | No |
+| Basic | INR 120 | 10 | No badge / insights included |
 | Pro | INR 199 | 100 | Yes |
 | Advance | INR 499 | 300 | Yes |
 | Enterprise | INR 999 | 999999, displayed as unlimited | Yes |

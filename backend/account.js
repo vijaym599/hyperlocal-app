@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const { PASSWORD_REQUIREMENT, isUsablePasswordInput, isStrongPassword } = require('./passwordPolicy');
-const { normalizePhone, isValidPhone, consumeVerificationToken } = require('./phoneVerification');
+const { normalizePhone, isValidPhone, startVerification, checkVerification, issuePasswordChangeToken, consumePasswordChangeToken, consumeVerificationToken } = require('./phoneVerification');
 const { securityEvent } = require('./security');
 
 const validEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -42,23 +42,68 @@ function mountAccount(app, pool, authenticate, rateLimit) {
     }
   });
 
+  app.post('/api/account/password-verification/start', authenticate, rateLimit(5, 60 * 60 * 1000, 'account-password-otp-start'), async (req, res) => {
+    const currentPassword = String(req.body?.current_password || '');
+    if (!isUsablePasswordInput(currentPassword)) return res.status(401).json({ error: 'Current password is incorrect.' });
+    try {
+      const current = await pool.query('SELECT phone,password FROM users WHERE id=$1', [req.user.userId]);
+      if (!current.rows.length || !(await bcrypt.compare(currentPassword, current.rows[0].password || ''))) {
+        return res.status(401).json({ error: 'Current password is incorrect.' });
+      }
+      const verification = await startVerification(current.rows[0].phone);
+      return res.set('Cache-Control', 'no-store').json({
+        message: 'Verification code sent to your registered mobile number.',
+        ...(verification.developmentCode ? { development_code: verification.developmentCode } : {})
+      });
+    } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
+      console.error('Password verification start failed:', error.message);
+      return res.status(500).json({ error: 'Unable to send the password verification code.' });
+    }
+  });
+
+  app.post('/api/account/password-verification/check', authenticate, rateLimit(10, 15 * 60 * 1000, 'account-password-otp-check'), async (req, res) => {
+    try {
+      const current = await pool.query('SELECT phone FROM users WHERE id=$1', [req.user.userId]);
+      if (!current.rows.length || !(await checkVerification(current.rows[0].phone, req.body?.code))) {
+        return res.status(400).json({ error: 'The verification code is incorrect or expired.' });
+      }
+      const claim = await issuePasswordChangeToken(pool, current.rows[0].phone);
+      return res.set('Cache-Control', 'no-store').json({ verification_token: claim.token, expires_at: claim.expiresAt.toISOString() });
+    } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
+      console.error('Password verification check failed:', error.message);
+      return res.status(500).json({ error: 'Unable to verify the password change code.' });
+    }
+  });
+
   app.post('/api/account/password', authenticate, rateLimit(5, 60 * 60 * 1000, 'account-password'), async (req, res) => {
     const currentPassword = String(req.body?.current_password || '');
     const newPassword = String(req.body?.new_password || '');
     if (!isStrongPassword(newPassword)) return res.status(400).json({ error: PASSWORD_REQUIREMENT });
     if (!isUsablePasswordInput(currentPassword)) return res.status(401).json({ error: 'Current password is incorrect.' });
     if (currentPassword === newPassword) return res.status(400).json({ error: 'Choose a different new password.' });
+    let client;
     try {
-      const current = await pool.query('SELECT password FROM users WHERE id=$1', [req.user.userId]);
+      client = await pool.connect();
+      await client.query('BEGIN');
+      const current = await client.query('SELECT phone,password FROM users WHERE id=$1 FOR UPDATE', [req.user.userId]);
       if (!current.rows.length || !(await bcrypt.compare(currentPassword, current.rows[0].password || ''))) {
+        await client.query('ROLLBACK');
         return res.status(401).json({ error: 'Current password is incorrect.' });
       }
+      await consumePasswordChangeToken(client, req.body?.password_verification_token, current.rows[0].phone);
       const hash = await bcrypt.hash(newPassword, 12);
-      await pool.query(`UPDATE users SET password=$1,password_changed_at=CURRENT_TIMESTAMP,auth_version=auth_version+1 WHERE id=$2`, [hash, req.user.userId]);
+      await client.query(`UPDATE users SET password=$1,password_changed_at=CURRENT_TIMESTAMP,auth_version=auth_version+1 WHERE id=$2`, [hash, req.user.userId]);
+      await client.query('COMMIT');
       return res.json({ message: 'Password changed. All devices have been signed out.' });
     } catch (error) {
+      if (client) await client.query('ROLLBACK').catch(() => {});
+      if (error.status) return res.status(error.status).json({ error: error.message });
       console.error('Password update failed:', error.message);
       return res.status(500).json({ error: 'Unable to change password.' });
+    } finally {
+      client?.release();
     }
   });
 

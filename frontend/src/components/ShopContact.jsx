@@ -1,12 +1,11 @@
 import { MessageCircle, Navigation, PhoneCall } from 'lucide-react';
 import { shopContactLinks } from '../shopContact.mjs';
-import { API_BASE_URL } from '../config';
+import { trackShopActivity } from '../activity.mjs';
 
 export default function ShopContact({ shop, session, action = null }) {
   const links = shopContactLinks(shop);
   const track = action => {
-    if (!session?.token || session.user?.user_type !== 'customer' || session.user?.is_admin) return;
-    fetch(`${API_BASE_URL}/api/activity/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` }, body: JSON.stringify({ shop_id: shop.id }) }).catch(() => {});
+    trackShopActivity(action, shop.id, { session, source: 'shop-portfolio' });
   };
   return <div aria-label="Contact and visit shop" className="mt-3 border-t border-white/20 pt-3">
     <div className="flex flex-wrap items-end justify-between gap-2">

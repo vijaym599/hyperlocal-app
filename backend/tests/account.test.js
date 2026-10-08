@@ -24,21 +24,40 @@ test('database-backed authentication rejects revoked sessions', async () => {
   });
 });
 
-test('password change verifies the current password and revokes all sessions', async () => {
+test('password change requires the current password and a one-time SMS OTP', async () => {
   process.env.JWT_SECRET = 'account-test-secret';
-  const hash = await bcrypt.hash('CurrentPass1', 4); const updates = [];
-  const pool = { query: async (sql, values = []) => {
-    if (sql.startsWith('SELECT password')) return { rows: [{ password: hash }] };
+  process.env.NODE_ENV = 'test'; process.env.PHONE_OTP_PROVIDER = 'development'; process.env.DEVELOPMENT_OTP_CODE = '654321';
+  const hash = await bcrypt.hash('CurrentPass1', 4); const updates = []; const claims = new Map();
+  const query = async (sql, values = []) => {
+    if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+    if (sql.startsWith('SELECT phone,password')) return { rows: [{ phone: '+919876543210', password: hash }] };
+    if (sql.startsWith('SELECT phone FROM users')) return { rows: [{ phone: '+919876543210' }] };
+    if (sql.startsWith('DELETE FROM phone_verification_claims')) return { rows: [] };
+    if (sql.startsWith('INSERT INTO phone_verification_claims')) { claims.set(values[0], { phone: values[1], consumed: false }); return { rows: [] }; }
+    if (sql.startsWith('UPDATE phone_verification_claims')) {
+      const claim = claims.get(values[0]);
+      if (!claim || claim.phone !== values[1] || claim.consumed) return { rows: [] };
+      claim.consumed = true; return { rows: [{ id: values[0] }] };
+    }
     if (sql.startsWith('UPDATE users SET password')) { updates.push(values); return { rows: [] }; }
     throw new Error(`Unexpected query: ${sql}`);
-  } };
+  };
+  const client = { query, release() {} };
+  const pool = { query, connect: async () => client };
   const app = express(); app.use(express.json()); mountAccount(app, pool, authenticate, () => (req, res, next) => next());
   await serverFor(app, async (base) => {
     const token = jwt.sign({ userId: 4 }, process.env.JWT_SECRET);
-    const post = (body) => fetch(`${base}/api/account/password`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
-    assert.equal((await post({ current_password: 'wrong', new_password: 'NewPassword2' })).status, 401);
-    assert.equal((await post({ current_password: 'CurrentPass1', new_password: 'short' })).status, 400);
-    assert.equal((await post({ current_password: 'CurrentPass1', new_password: 'NewPassword2' })).status, 200);
+    const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    assert.equal((await post('/api/account/password-verification/start', { current_password: 'wrong' })).status, 401);
+    const started = await post('/api/account/password-verification/start', { current_password: 'CurrentPass1' });
+    assert.equal(started.status, 200); assert.equal((await started.json()).development_code, '654321');
+    assert.equal((await post('/api/account/password-verification/check', { code: '000000' })).status, 400);
+    const checked = await post('/api/account/password-verification/check', { code: '654321' });
+    const verification = await checked.json(); assert.ok(verification.verification_token);
+    assert.equal((await post('/api/account/password', { current_password: 'CurrentPass1', new_password: 'short', password_verification_token: verification.verification_token })).status, 400);
+    assert.equal((await post('/api/account/password', { current_password: 'CurrentPass1', new_password: 'NewPassword2' })).status, 403);
+    assert.equal((await post('/api/account/password', { current_password: 'CurrentPass1', new_password: 'NewPassword2', password_verification_token: verification.verification_token })).status, 200);
+    assert.equal((await post('/api/account/password', { current_password: 'CurrentPass1', new_password: 'AnotherPass3', password_verification_token: verification.verification_token })).status, 403);
     assert.equal(updates.length, 1);
     assert.equal(await bcrypt.compare('NewPassword2', updates[0][0]), true);
   });

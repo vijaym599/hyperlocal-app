@@ -49,7 +49,7 @@ async function twilioRequest(config, resource, fields) {
 
 async function startVerification(phone, env = process.env) {
   const normalized = normalizePhone(phone);
-  if (!isValidPhone(normalized)) throw failure(400, 'Enter a valid phone number with country code, for example +919876543210.');
+  if (!/^\+91[6-9]\d{9}$/.test(normalized)) throw failure(400, 'Enter a valid 10-digit Indian mobile number.');
   const config = providerConfig(env);
   if (config.provider === 'development') return { phone: normalized, status: 'pending', developmentCode: config.code };
   const result = await twilioRequest(config, 'Verifications', { To: normalized, Channel: 'sms' });
@@ -89,7 +89,7 @@ async function issuePurposeToken(pool, phone, purpose, env = process.env) {
 
 const issueVerificationToken = (pool, phone, env = process.env) => issuePurposeToken(pool, phone, 'phone_signup', env);
 const issuePasswordResetToken = (pool, phone, env = process.env) => issuePurposeToken(pool, phone, 'password_reset', env);
-const issueLoginVerificationToken = (pool, phone, env = process.env) => issuePurposeToken(pool, phone, 'login_otp', env);
+const issuePasswordChangeToken = (pool, phone, env = process.env) => issuePurposeToken(pool, phone, 'password_change', env);
 
 function verifyPurposeToken(token, phone, purpose, env = process.env) {
   if (!token || !env.JWT_SECRET) throw failure(403, 'Verification expired or is invalid. Send a new code.');
@@ -107,11 +107,11 @@ async function consumeVerificationToken(client, token, phone, env = process.env)
   if (!result.rows.length) throw failure(403, 'Phone verification was already used or has expired. Send a new code.');
 }
 
-async function consumeLoginVerificationToken(client, token, phone, env = process.env) {
-  const claim = verifyPurposeToken(token, phone, 'login_otp', env);
+async function consumePasswordChangeToken(client, token, phone, env = process.env) {
+  const claim = verifyPurposeToken(token, phone, 'password_change', env);
   const result = await client.query(`UPDATE phone_verification_claims SET consumed_at=CURRENT_TIMESTAMP
     WHERE id=$1 AND phone=$2 AND consumed_at IS NULL AND expires_at>CURRENT_TIMESTAMP RETURNING id`, [claim.jti, phone]);
-  if (!result.rows.length) throw failure(403, 'Login verification was already used or has expired. Sign in again.');
+  if (!result.rows.length) throw failure(403, 'Password verification was already used or has expired. Send a new code.');
 }
 
 async function resetPasswordWithToken(pool, token, phone, passwordHash, env = process.env) {
@@ -132,7 +132,7 @@ function mountPhoneVerification(app, pool, rateLimit) {
   app.post('/api/auth/phone-verification/start', rateLimit(5, 60 * 60 * 1000, 'phone-otp-start'), async (req, res) => {
     try {
       const phone = normalizePhone(req.body?.phone);
-      if (!isValidPhone(phone)) throw failure(400, 'Enter a valid phone number with country code, for example +919876543210.');
+      if (!/^\+91[6-9]\d{9}$/.test(phone)) throw failure(400, 'Enter a valid 10-digit Indian mobile number.');
       const now = Date.now();
       const attempt = phoneSendLimits.get(phone);
       if (attempt && now < attempt.nextAt) throw failure(429, 'Wait one minute before requesting another code.');
@@ -158,7 +158,7 @@ function mountPhoneVerification(app, pool, rateLimit) {
   app.post('/api/auth/password-reset/start', rateLimit(5, 60 * 60 * 1000, 'password-reset-start'), async (req, res) => {
     try {
       const phone = normalizePhone(req.body?.phone);
-      if (!isValidPhone(phone)) throw failure(400, 'Enter a valid phone number with country code, for example +919876543210.');
+      if (!/^\+91[6-9]\d{9}$/.test(phone)) throw failure(400, 'Enter a valid 10-digit Indian mobile number.');
       const now = Date.now();
       const attempt = resetSendLimits.get(phone);
       if (attempt && now < attempt.nextAt) throw failure(429, 'Wait one minute before requesting another code.');
@@ -197,4 +197,4 @@ function mountPhoneVerification(app, pool, rateLimit) {
   });
 }
 
-module.exports = { normalizePhone, isValidPhone, providerConfig, startVerification, checkVerification, initPhoneVerification, issueVerificationToken, consumeVerificationToken, issuePasswordResetToken, resetPasswordWithToken, issueLoginVerificationToken, consumeLoginVerificationToken, mountPhoneVerification };
+module.exports = { normalizePhone, isValidPhone, providerConfig, startVerification, checkVerification, initPhoneVerification, issueVerificationToken, consumeVerificationToken, issuePasswordResetToken, resetPasswordWithToken, issuePasswordChangeToken, consumePasswordChangeToken, mountPhoneVerification };

@@ -10,7 +10,7 @@ const makeVisitorId = () => {
   return [...bytes].map((value, index) => `${[4, 6, 8, 10].includes(index) ? '-' : ''}${value.toString(16).padStart(2, '0')}`).join('');
 };
 
-const visitorId = () => {
+export const getVisitorId = () => {
   if (memoryVisitorId) return memoryVisitorId;
   try {
     const stored = localStorage.getItem('nearbuy-visitor-id');
@@ -29,6 +29,6 @@ export function trackPageVisit(pageName) {
   } catch { /* analytics must never interrupt the app */ }
   void fetch(`${API_BASE_URL}/api/analytics/visit`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
-    body: JSON.stringify({ visitor_id: visitorId(), page_name: pageName }),
+    body: JSON.stringify({ visitor_id: getVisitorId(), page_name: pageName }),
   }).catch(() => {});
 }

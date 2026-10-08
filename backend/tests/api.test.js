@@ -22,6 +22,13 @@ const pool = {
       claim.consumed = true; return { rows: [{ id: values[0] }] };
     }
     if (sql.includes('SELECT auth_version FROM users')) return { rows: [{ auth_version: 1 }] };
+    if (sql.includes('SELECT user_type, is_admin FROM users')) return { rows: [{ user_type: 'customer', is_admin: false }] };
+    if (sql.includes('INSERT INTO user_activities')) return { rows: [] };
+    if (sql.includes("COUNT(*) FILTER (WHERE action_type = 'view')")) return { rows: [{ views: 3, unique_viewers: 2, directions: 1, calls: 1, whatsapp_messages: 1, reviews: 1, product_views: 2, favorites: 1, shares: 1, searches: 1, total_interactions: 12 }] };
+    if (sql.includes('FROM shop_reviews sr') && sql.includes('UNION ALL')) return { rows: [{ id: 1, target: 'shop', rating: 5, comment: 'Helpful shop', owner_name: 'Customer' }] };
+    if (sql.startsWith('SELECT id, latitude, longitude FROM shops')) return { rows: [{ id: 1, latitude: 13.08, longitude: 80.27 }] };
+    if (sql.includes('WITH nearby AS')) return { rows: [{ id: 8, requested_product: 'Rice', distance_km: '2.1', radius_km: '5', status: 'new', total_count: 1 }] };
+    if (sql.includes('SELECT s.id, s.name FROM shops s') && sql.includes('EXISTS')) return { rows: [{ id: 1, name: 'Test shop' }] };
     if (sql.includes('AS product_count')) return { rows: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `Shop ${i + 1}`, product_count: 2 })) };
     if (sql.includes('WITH ranked_products')) return { rows: searchProducts.slice(values[7], values[7] + values[6]) };
     if (sql.includes('INSERT INTO product_requests')) return { rows: [{ id: 1 }] };
@@ -112,22 +119,14 @@ test('health checks the database and returns an unavailable status without expos
   } finally { pool.query = query; }
 });
 
-test('login requires password and then a single-use SMS OTP before issuing a session', async () => {
-  const first = await post('/api/auth/login', { phone: loginUser.phone, password: 'Password123' });
-  assert.equal(first.status, 200);
-  const challenge = await first.json();
-  assert.equal(challenge.requires_otp, true);
-  assert.equal(challenge.development_code, '654321');
-  assert.equal(challenge.token, undefined);
-  assert.ok(challenge.login_token);
-
-  assert.equal((await post('/api/auth/login/verify', { phone: loginUser.phone, code: '000000', login_token: challenge.login_token })).status, 400);
-  const verified = await post('/api/auth/login/verify', { phone: loginUser.phone, code: '654321', login_token: challenge.login_token });
-  assert.equal(verified.status, 200);
-  const session = await verified.json();
+test('login issues a session using only a valid phone number and password', async () => {
+  assert.equal((await post('/api/auth/login', { phone: loginUser.phone, password: 'WrongPassword1' })).status, 401);
+  const response = await post('/api/auth/login', { phone: loginUser.phone, password: 'Password123' });
+  assert.equal(response.status, 200);
+  const session = await response.json();
   assert.equal(jwt.verify(session.token, process.env.JWT_SECRET).userId, loginUser.id);
   assert.equal(session.user.user_type, 'customer');
-  assert.equal((await post('/api/auth/login/verify', { phone: loginUser.phone, code: '654321', login_token: challenge.login_token })).status, 403);
+  assert.equal(session.requires_otp, undefined);
 });
 
 test('production cannot grant paid accounts or billing changes using client payment references', async () => {
@@ -176,9 +175,42 @@ test('all-distances product requests accept null and omitted radius', async () =
     assert.equal(response.status, 201);
     assert.equal(calls.at(-1).values[4], null);
   }
-  const response = await post('/api/product-requests', { requested_product: 'Rice', radius_km: 5 });
+  const response = await post('/api/product-requests', { requested_product: 'Rice', customer_phone: '9876543210', radius_km: 5 });
   assert.equal(response.status, 201);
   assert.equal(calls.at(-1).values[4], 5);
+  assert.equal(calls.at(-1).values[1], '+919876543210');
+});
+
+test('guest and signed-in customer interactions are recorded with anonymous visitor identity', async () => {
+  const visitorId = '123e4567-e89b-42d3-a456-426614174000';
+  assert.equal((await post('/api/activity/view', { shop_id: 1 })).status, 400);
+  const guest = await post('/api/activity/product_view', { shop_id: 1, product_id: 4, visitor_id: visitorId, source: 'nearby-search' });
+  assert.equal(guest.status, 201);
+  const guestInsert = calls.findLast(call => call.sql.includes('INSERT INTO user_activities'));
+  assert.deepEqual(guestInsert.values.slice(0, 5), [null, visitorId, 'product_view', 1, 4]);
+
+  const customer = await post('/api/activity/favorite', { shop_id: 1, product_id: 4, visitor_id: visitorId }, true);
+  assert.equal(customer.status, 201);
+  const customerInsert = calls.findLast(call => call.sql.includes('INSERT INTO user_activities'));
+  assert.deepEqual(customerInsert.values.slice(0, 5), [1, visitorId, 'favorite', 1, 4]);
+});
+
+test('every shop plan can load complete activity insights and nearby demand', async () => {
+  const headers = { Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` };
+  const beforeInsights = calls.length;
+  const insightsResponse = await fetch(base + '/api/shops/1/insights?period=total', { headers });
+  assert.equal(insightsResponse.status, 200);
+  const insights = await insightsResponse.json();
+  assert.equal(insights.insights.product_views, 2);
+  assert.equal(insights.insights.total_interactions, 12);
+  assert.equal(insights.latest_reviews[0].comment, 'Helpful shop');
+  assert.equal(calls.slice(beforeInsights).some(call => call.sql.includes('SELECT subscription_plan')), false);
+
+  const demandResponse = await fetch(base + '/api/shops/1/product-requests', { headers });
+  assert.equal(demandResponse.status, 200);
+  const demand = await demandResponse.json();
+  assert.equal(demand.requests[0].requested_product, 'Rice');
+  assert.equal(demand.total, 1);
 });
 
 test('invalid radius is rejected without inserting a request', async () => {

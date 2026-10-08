@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
-const { normalizePhone, providerConfig, startVerification, checkVerification, issueVerificationToken, consumeVerificationToken, issuePasswordResetToken, resetPasswordWithToken, issueLoginVerificationToken, consumeLoginVerificationToken } = require('../phoneVerification');
+const { normalizePhone, providerConfig, startVerification, checkVerification, issueVerificationToken, consumeVerificationToken, issuePasswordResetToken, resetPasswordWithToken, issuePasswordChangeToken, consumePasswordChangeToken } = require('../phoneVerification');
 
 const dev = { NODE_ENV: 'test', PHONE_OTP_PROVIDER: 'development', DEVELOPMENT_OTP_CODE: '654321', JWT_SECRET: 'phone-verification-test-secret' };
 
@@ -57,7 +57,7 @@ test('password reset tokens are purpose-bound, phone-bound and single use', asyn
   await assert.rejects(() => resetPasswordWithToken(client, reset.token, '+919876543210', 'hash', dev), { status: 403 });
 });
 
-test('login OTP claims cannot be replayed or replaced with another token purpose', async () => {
+test('password-change OTP claims cannot be replayed or replaced with another token purpose', async () => {
   const rows = new Map();
   const client = { query: async (sql, values) => {
     if (sql.startsWith('DELETE')) return { rows: [] };
@@ -69,10 +69,10 @@ test('login OTP claims cannot be replayed or replaced with another token purpose
     }
     throw new Error(`Unexpected query: ${sql}`);
   } };
-  const login = await issueLoginVerificationToken(client, '+919876543210', dev);
+  const passwordChange = await issuePasswordChangeToken(client, '+919876543210', dev);
   const signup = await issueVerificationToken(client, '+919876543210', dev);
-  assert.equal(jwt.verify(login.token, dev.JWT_SECRET).purpose, 'login_otp');
-  await assert.rejects(() => consumeLoginVerificationToken(client, signup.token, '+919876543210', dev), { status: 403 });
-  await consumeLoginVerificationToken(client, login.token, '+919876543210', dev);
-  await assert.rejects(() => consumeLoginVerificationToken(client, login.token, '+919876543210', dev), { status: 403 });
+  assert.equal(jwt.verify(passwordChange.token, dev.JWT_SECRET).purpose, 'password_change');
+  await assert.rejects(() => consumePasswordChangeToken(client, signup.token, '+919876543210', dev), { status: 403 });
+  await consumePasswordChangeToken(client, passwordChange.token, '+919876543210', dev);
+  await assert.rejects(() => consumePasswordChangeToken(client, passwordChange.token, '+919876543210', dev), { status: 403 });
 });

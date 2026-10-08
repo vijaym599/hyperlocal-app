@@ -135,12 +135,14 @@ const initDb = async () => {
 
       CREATE TABLE IF NOT EXISTS user_activities (
         id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        action_type VARCHAR(30) NOT NULL CHECK (action_type IN ('review', 'call', 'directions', 'view', 'whatsapp')),
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        visitor_id UUID,
+        action_type VARCHAR(30) NOT NULL CHECK (action_type IN ('review', 'call', 'directions', 'view', 'whatsapp', 'product_view', 'favorite', 'share', 'search')),
         shop_id INTEGER REFERENCES shops(id) ON DELETE SET NULL,
         product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
         details JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT user_activities_actor_check CHECK (user_id IS NOT NULL OR visitor_id IS NOT NULL)
       );
       CREATE INDEX IF NOT EXISTS user_activities_user_created_idx
         ON user_activities (user_id, created_at DESC);
@@ -235,13 +237,22 @@ const initDb = async () => {
     `);
 
     await pool.query(`
+      ALTER TABLE user_activities ALTER COLUMN user_id DROP NOT NULL;
+      ALTER TABLE user_activities ADD COLUMN IF NOT EXISTS visitor_id UUID;
       ALTER TABLE user_activities DROP CONSTRAINT IF EXISTS user_activities_action_type_check;
       ALTER TABLE user_activities
         ADD CONSTRAINT user_activities_action_type_check
-        CHECK (action_type IN ('review', 'call', 'directions', 'view', 'whatsapp'));
+        CHECK (action_type IN ('review', 'call', 'directions', 'view', 'whatsapp', 'product_view', 'favorite', 'share', 'search'));
 
       DO $$
       BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'user_activities_actor_check'
+        ) THEN
+          ALTER TABLE user_activities
+            ADD CONSTRAINT user_activities_actor_check
+            CHECK (user_id IS NOT NULL OR visitor_id IS NOT NULL);
+        END IF;
         IF NOT EXISTS (
           SELECT 1
           FROM pg_constraint

@@ -18,6 +18,7 @@ async function optimizeSchema(pool) {
     CREATE INDEX IF NOT EXISTS product_reviews_recent_idx ON product_reviews(product_id,updated_at DESC);
     CREATE INDEX IF NOT EXISTS user_activities_shop_created_idx ON user_activities(shop_id,created_at DESC) WHERE shop_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS user_activities_product_created_idx ON user_activities(product_id,created_at DESC) WHERE product_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS user_activities_visitor_created_idx ON user_activities(visitor_id,created_at DESC) WHERE visitor_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS referral_earnings_user_status_idx ON referral_earnings(user_id,status,created_at DESC);
     CREATE INDEX IF NOT EXISTS referral_redemptions_user_status_idx ON referral_redemptions(user_id,status,created_at DESC);
     CREATE INDEX IF NOT EXISTS referral_redemption_items_earning_idx ON referral_redemption_items(earning_id);

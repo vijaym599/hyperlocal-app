@@ -9,7 +9,7 @@ const { geocode, searchPlaces } = require('./geocoder');
 const { withAccountValidation } = require('./middleware/auth');
 const { validateProduction, trustProxy } = require('./production');
 const { attachReferral, mountReferrals } = require('./referrals');
-const { normalizePhone, isValidPhone, startVerification, checkVerification, consumeVerificationToken, issueLoginVerificationToken, consumeLoginVerificationToken, mountPhoneVerification } = require('./phoneVerification');
+const { normalizePhone, isValidPhone, consumeVerificationToken, mountPhoneVerification } = require('./phoneVerification');
 const { mountAnalytics } = require('./analytics');
 const { mountAdminManagement } = require('./adminManagement');
 const { mountAccount } = require('./account');
@@ -21,6 +21,7 @@ const { PASSWORD_REQUIREMENT, isUsablePasswordInput, isStrongPassword } = requir
 
 const app = express();
 const authenticate = withAccountValidation(pool);
+const optionalAuthenticate = (req, res, next) => req.get('authorization') ? authenticate(req, res, next) : next();
 const PORT = process.env.PORT || 5000;
 const allowedOrigins = String(process.env.CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean);
 const rateLimitStore = new Map();
@@ -85,11 +86,15 @@ const SUBSCRIPTION_LIMITS = {
   enterprise: 999999
 };
 const VERIFIED_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
-const INSIGHTS_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const AVAILABILITY_STATUSES = new Set(['available', 'low_stock', 'out_of_stock']);
 const productFallbackImage = (name, brand = '') => `https://loremflickr.com/640/480/${encodeURIComponent(`${brand || ''} ${name || 'local product'}`.trim())}`;
 const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const indianContactPhone = (value) => {
+  if (value == null || String(value).trim() === '') return null;
+  const phone = normalizePhone(value);
+  return /^\+91[6-9]\d{9}$/.test(phone) ? phone : undefined;
+};
 const hasOversizedImagePayload = (value) => typeof value === 'string' && value.startsWith('data:image/') && value.length > 1_700_000;
 const validProductPrice = value => ['string', 'number'].includes(typeof value) && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 99999999.99;
 const validProductText = body => typeof body.name === 'string' && body.name.trim().length > 0 && body.name.length <= 255 && ['description', 'brand', 'image_url'].every(key => body[key] == null || typeof body[key] === 'string') && (body.brand == null || body.brand.length <= 100);
@@ -114,11 +119,13 @@ const createToken = (user) => {
   );
 };
 
-const recordActivity = (userId, actionType, { shopId = null, productId = null, details = {} }) =>
+const ACTIVITY_ACTIONS = new Set(['view', 'call', 'directions', 'whatsapp', 'review', 'product_view', 'favorite', 'share', 'search']);
+const VISITOR_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const recordActivity = (userId, actionType, { visitorId = null, shopId = null, productId = null, details = {} }) =>
   pool.query(
-    `INSERT INTO user_activities (user_id, action_type, shop_id, product_id, details)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [userId, actionType, shopId, productId, JSON.stringify(details)]
+    `INSERT INTO user_activities (user_id, visitor_id, action_type, shop_id, product_id, details)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [userId, visitorId, actionType, shopId, productId, JSON.stringify(details)]
   );
 
 const isShopOwner = async (shopId, userId) => {
@@ -269,8 +276,12 @@ app.post('/api/auth/register-shop', async (req, res) => {
     if (!isStrongPassword(password)) return res.status(400).json({ error: PASSWORD_REQUIREMENT });
 
     const cleanPhone = normalizePhone(account_phone);
+    const shopPhone = indianContactPhone(phone);
+    const shopWhatsApp = indianContactPhone(whatsapp_number);
     const cleanEmail = String(email || '').trim().toLowerCase() || null;
-    if (!isValidPhone(cleanPhone)) return res.status(400).json({ error: 'Enter a valid phone number with country code.' });
+    if (!/^\+91[6-9]\d{9}$/.test(cleanPhone)) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number.' });
+    if (!shopPhone) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number.' });
+    if (shopWhatsApp === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number or leave it blank.' });
     if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
     const parsedLatitude = Number(latitude);
     const parsedLongitude = Number(longitude);
@@ -316,8 +327,8 @@ app.post('/api/auth/register-shop', async (req, res) => {
         parsedLatitude,
         parsedLongitude,
         google_map_link?.trim() || '',
-        phone?.trim() || null,
-        whatsapp_number?.trim() || null,
+        shopPhone,
+        shopWhatsApp,
         opening_hours?.trim() || null,
         opening_time || null,
         closing_time || null,
@@ -429,32 +440,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid phone number or password.' });
     }
 
-    const verification = await startVerification(phone);
-    const claim = await issueLoginVerificationToken(pool, phone);
-    return res.set('Cache-Control', 'no-store').json({
-      message: 'Password accepted. Enter the SMS code to finish signing in.',
-      requires_otp: true,
-      login_token: claim.token,
-      expires_at: claim.expiresAt.toISOString(),
-      ...(verification.developmentCode ? { development_code: verification.developmentCode } : {})
-    });
-
-  } catch (err) {
-    console.error('Login Error:', err);
-    return res.status(500).json({ error: 'Server error during login.' });
-  }
-});
-
-app.post('/api/auth/login/verify', async (req, res) => {
-  const phone = normalizePhone(req.body?.phone);
-  const code = String(req.body?.code || '').trim();
-  if (!isValidPhone(phone) || !/^\d{4,10}$/.test(code) || !req.body?.login_token) return res.status(400).json({ error: 'Phone number, login verification and SMS code are required.' });
-  try {
-    if (!(await checkVerification(phone, code))) return res.status(400).json({ error: 'The SMS code is incorrect or expired.' });
-    await consumeLoginVerificationToken(pool, req.body.login_token, phone);
-    const userRes = await pool.query('SELECT * FROM users WHERE phone = $1', [phone]);
-    if (!userRes.rows.length) return res.status(401).json({ error: 'Account is no longer available.' });
-    const user = userRes.rows[0];
     const shopRes = await pool.query('SELECT * FROM shops WHERE user_id = $1', [user.id]);
     const shop = shopRes.rows[0] || null;
     if (shop && user.user_type !== 'shop_owner') {
@@ -467,10 +452,10 @@ app.post('/api/auth/login/verify', async (req, res) => {
       user: { id: user.id, phone: user.phone, email: user.email, owner_name: user.owner_name, user_type: user.user_type || (shop ? 'shop_owner' : 'customer'), is_admin: user.is_admin },
       shop
     });
+
   } catch (err) {
-    if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error('Login verification error:', err);
-    return res.status(500).json({ error: 'Unable to verify this login.' });
+    console.error('Login Error:', err);
+    return res.status(500).json({ error: 'Server error during login.' });
   }
 });
 
@@ -748,7 +733,11 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
   const { name, category, address, latitude, longitude, google_map_link, phone, whatsapp_number, image_url, opening_hours, opening_time, closing_time } = req.body;
   const { city } = req.body;
+  const shopPhone = indianContactPhone(phone);
+  const shopWhatsApp = indianContactPhone(whatsapp_number);
   if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
+  if (shopPhone === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number or leave it blank.' });
+  if (shopWhatsApp === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number or leave it blank.' });
 
   if (!shopId || !name?.trim() || !category) {
     return res.status(400).json({ error: 'Shop name and category are required.' });
@@ -790,8 +779,8 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
         latitude == null || latitude === '' ? null : Number(latitude),
         longitude == null || longitude === '' ? null : Number(longitude),
         google_map_link?.trim() || '',
-        phone?.trim() || null,
-        whatsapp_number?.trim() || null,
+        shopPhone,
+        shopWhatsApp,
         opening_hours?.trim() || null,
         opening_time || null,
         closing_time || null,
@@ -1091,15 +1080,39 @@ app.post('/api/reviews/:target/:id', authenticate, requireCustomer, async (req, 
   } catch (err) { return res.status(500).json({ error: 'Unable to save review.' }); }
 });
 
-app.post('/api/activity/:action', authenticate, requireCustomer, async (req, res) => {
+app.post('/api/activity/:action', rateLimit(240, 60 * 60 * 1000, 'shop-activity'), optionalAuthenticate, async (req, res) => {
   const action = req.params.action;
   const shopId = Number(req.body?.shop_id) || null;
   const productId = Number(req.body?.product_id) || null;
-  if (!['view', 'call', 'directions', 'whatsapp'].includes(action) || !shopId) return res.status(400).json({ error: 'A valid shop activity is required.' });
+  const visitorId = String(req.body?.visitor_id || '').trim().toLowerCase();
+  if (!ACTIVITY_ACTIONS.has(action) || action === 'review' || !shopId || (!req.user && !VISITOR_ID_PATTERN.test(visitorId))) {
+    return res.status(400).json({ error: 'A valid shop activity is required.' });
+  }
   try {
-    const shop = await pool.query('SELECT id, name FROM shops WHERE id = $1', [shopId]);
-    if (!shop.rows.length) return res.status(404).json({ error: 'Shop not found.' });
-    await recordActivity(req.user.userId, action, { shopId, productId, details: { shop_name: shop.rows[0].name } });
+    let userId = null;
+    if (req.user) {
+      const account = await pool.query('SELECT user_type, is_admin FROM users WHERE id = $1', [req.user.userId]);
+      if (account.rows[0]?.user_type !== 'customer' || account.rows[0]?.is_admin) return res.status(204).end();
+      userId = req.user.userId;
+    }
+    const shop = await pool.query(
+      `SELECT s.id, s.name FROM shops s
+       WHERE s.id = $1 AND ($2::int IS NULL OR EXISTS (SELECT 1 FROM products p WHERE p.id = $2 AND p.shop_id = s.id))`,
+      [shopId, productId]
+    );
+    if (!shop.rows.length) return res.status(404).json({ error: 'Shop or product not found.' });
+    const resultCount = Number(req.body?.result_count);
+    const source = String(req.body?.source || '').trim().slice(0, 40);
+    await recordActivity(userId, action, {
+      visitorId: VISITOR_ID_PATTERN.test(visitorId) ? visitorId : null,
+      shopId,
+      productId,
+      details: {
+        shop_name: shop.rows[0].name,
+        ...(source ? { source } : {}),
+        ...(Number.isInteger(resultCount) && resultCount >= 0 ? { result_count: Math.min(resultCount, 10000) } : {})
+      }
+    });
     return res.status(201).json({ message: 'Activity saved.' });
   } catch (err) { return res.status(500).json({ error: 'Unable to save activity.' }); }
 });
@@ -1119,7 +1132,7 @@ app.get('/api/activity', authenticate, requireCustomer, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: 'Unable to load activity.' }); }
 });
 
-// Shop owners on Pro and higher can view aggregate engagement for their own shop.
+// Every shop owner can view aggregate engagement for their own shop.
 app.get('/api/shops/:shopId/insights', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
   const period = String(req.query.period || 'total').toLowerCase();
@@ -1127,26 +1140,37 @@ app.get('/api/shops/:shopId/insights', authenticate, async (req, res) => {
   if (!['monthly', 'total'].includes(period)) return res.status(400).json({ error: 'Insights period must be monthly or total.' });
   try {
     if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view insights for your own shop.' });
-    const shopResult = await pool.query('SELECT subscription_plan FROM shops WHERE id = $1', [shopId]);
-    const shop = shopResult.rows[0];
-    if (!shop) return res.status(404).json({ error: 'Shop not found.' });
-    if (!INSIGHTS_SUBSCRIPTION_PLANS.has(shop.subscription_plan)) return res.status(403).json({ error: 'Shop insights are available on Pro, Advance, and Enterprise plans.' });
-
     const periodFilter = period === 'monthly' ? "AND created_at >= DATE_TRUNC('month', CURRENT_TIMESTAMP)" : '';
-    const result = await pool.query(
+    const [result, latestReviews] = await Promise.all([pool.query(
       `SELECT
         COUNT(*) FILTER (WHERE action_type = 'view')::int AS views,
-        COUNT(DISTINCT user_id) FILTER (WHERE action_type = 'view')::int AS unique_viewers,
+        COUNT(DISTINCT COALESCE('u:' || user_id::text, 'v:' || visitor_id::text)) FILTER (WHERE action_type = 'view')::int AS unique_viewers,
         COUNT(*) FILTER (WHERE action_type = 'directions')::int AS directions,
         COUNT(*) FILTER (WHERE action_type = 'call')::int AS calls,
         COUNT(*) FILTER (WHERE action_type = 'whatsapp')::int AS whatsapp_messages,
         COUNT(*) FILTER (WHERE action_type = 'review')::int AS reviews,
-        COUNT(*) FILTER (WHERE action_type IN ('view', 'directions', 'call', 'whatsapp', 'review'))::int AS total_interactions
+        COUNT(*) FILTER (WHERE action_type = 'product_view')::int AS product_views,
+        COUNT(*) FILTER (WHERE action_type = 'favorite')::int AS favorites,
+        COUNT(*) FILTER (WHERE action_type = 'share')::int AS shares,
+        COUNT(*) FILTER (WHERE action_type = 'search')::int AS searches,
+        COUNT(*) FILTER (WHERE action_type IN ('view', 'directions', 'call', 'whatsapp', 'review', 'product_view', 'favorite', 'share', 'search'))::int AS total_interactions
        FROM user_activities
        WHERE shop_id = $1 ${periodFilter}`,
       [shopId]
-    );
-    return res.json({ insights: result.rows[0], period });
+    ), pool.query(
+      `SELECT * FROM (
+         SELECT sr.id, 'shop' AS target, NULL::int AS product_id, NULL::text AS product_name,
+                sr.rating, sr.comment, sr.updated_at, u.owner_name
+         FROM shop_reviews sr JOIN users u ON u.id = sr.user_id WHERE sr.shop_id = $1
+         UNION ALL
+         SELECT pr.id, 'product' AS target, p.id AS product_id, p.name AS product_name,
+                pr.rating, pr.comment, pr.updated_at, u.owner_name
+         FROM product_reviews pr JOIN products p ON p.id = pr.product_id
+         JOIN users u ON u.id = pr.user_id WHERE p.shop_id = $1
+       ) reviews ORDER BY updated_at DESC LIMIT 10`,
+      [shopId]
+    )]);
+    return res.set('Cache-Control', 'no-store').json({ insights: result.rows[0], latest_reviews: latestReviews.rows, period });
   } catch (err) {
     console.error('Shop insights error:', err);
     return res.status(500).json({ error: 'Unable to load shop insights.' });
@@ -1296,10 +1320,12 @@ app.post('/api/product-requests', rateLimit(10, 60 * 60 * 1000), async (req, res
   const parsedLatitude = latitude == null || latitude === '' ? null : Number(latitude);
   const parsedLongitude = longitude == null || longitude === '' ? null : Number(longitude);
   const parsedRadius = radius_km == null || radius_km === '' ? null : Number(radius_km);
+  const contactPhone = indianContactPhone(customer_phone);
 
   if (productName.length < 2 || productName.length > 255) {
     return res.status(400).json({ error: 'Please enter a product name between 2 and 255 characters.' });
   }
+  if (contactPhone === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit contact number or leave it blank.' });
   if (
     (parsedLatitude !== null && !Number.isFinite(parsedLatitude)) ||
     (parsedLongitude !== null && !Number.isFinite(parsedLongitude)) ||
@@ -1316,12 +1342,45 @@ app.post('/api/product-requests', rateLimit(10, 60 * 60 * 1000), async (req, res
         (requested_product, customer_phone, latitude, longitude, radius_km)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, requested_product, created_at`,
-      [productName, customer_phone?.trim() || null, parsedLatitude, parsedLongitude, parsedRadius]
+      [productName, contactPhone, parsedLatitude, parsedLongitude, parsedRadius]
     );
     return res.status(201).json({ message: 'Your product request has been recorded.', request: result.rows[0] });
   } catch (err) {
     console.error('Product request error:', err);
     return res.status(500).json({ error: 'Unable to save your product request.' });
+  }
+});
+
+app.get('/api/shops/:shopId/product-requests', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  if (!Number.isSafeInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
+  try {
+    const shop = await pool.query('SELECT id, latitude, longitude FROM shops WHERE id = $1 AND user_id = $2', [shopId, req.user.userId]);
+    if (!shop.rows.length) return res.status(403).json({ error: 'You can only view demand near your own shop.' });
+    const { latitude, longitude } = shop.rows[0];
+    const requests = await pool.query(
+      `WITH nearby AS (
+         SELECT id, requested_product, radius_km, status, created_at,
+                CASE WHEN latitude IS NULL OR longitude IS NULL THEN NULL ELSE
+                  6371 * ACOS(LEAST(1, GREATEST(-1,
+                    COS(RADIANS($1::double precision)) * COS(RADIANS(latitude)) * COS(RADIANS(longitude) - RADIANS($2::double precision)) +
+                    SIN(RADIANS($1::double precision)) * SIN(RADIANS(latitude))
+                  ))) END AS distance_km,
+                CASE WHEN customer_phone IS NULL THEN NULL ELSE RIGHT(customer_phone, 4) END AS phone_last_four
+         FROM product_requests
+       )
+       SELECT id, requested_product, radius_km, status, created_at, phone_last_four,
+              CASE WHEN distance_km IS NULL THEN NULL ELSE ROUND(distance_km::numeric, 1) END AS distance_km,
+              COUNT(*) OVER()::int AS total_count
+       FROM nearby
+       WHERE distance_km IS NULL OR radius_km IS NULL OR distance_km <= radius_km
+       ORDER BY created_at DESC LIMIT 50`,
+      [latitude, longitude]
+    );
+    return res.set('Cache-Control', 'no-store').json({ requests: requests.rows, total: requests.rows[0]?.total_count || 0 });
+  } catch (err) {
+    console.error('Shop demand error:', err.message);
+    return res.status(500).json({ error: 'Unable to load nearby customer demand.' });
   }
 });
 

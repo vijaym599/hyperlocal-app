@@ -76,7 +76,7 @@ export default function App() {
         {activeTab === 'shop-directory' && <ShopDirectory onBack={() => setActiveTab(homeTab(session))} onOpenShop={shop => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} />}
         {activeTab === 'explore' && (role === 'guest' || role === 'customer') && <NearbySearch session={session} onRequireLogin={() => setActiveTab('customer-auth')} onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); }} />}
 
-        {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers />}
+        {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers session={session} />}
 
         {activeTab === 'assistant' && (role === 'guest' || role === 'customer') && <Suspense fallback={<div className="mx-auto max-w-6xl px-5 py-20 text-center text-sm font-semibold text-slate-500">Loading AI assistant…</div>}><CustomerAssistant onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} /></Suspense>}
 

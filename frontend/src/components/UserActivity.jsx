@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Activity, CheckCircle2, Clock3, Gift, KeyRound, LogOut, MapPinned, MessageCircle, MessageSquareWarning, Phone, Save, ShieldCheck, Star, UserRound } from 'lucide-react';
+import { Activity, CheckCircle2, Clock3, Gift, LogOut, MapPinned, MessageCircle, MessageSquareWarning, Phone, Save, ShieldCheck, Star, UserRound } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import ReferralRewards from './ReferralRewards';
 import MyReports from './MyReports';
 import ChangePhoneForm from './ChangePhoneForm';
+import PasswordChangeForm from './PasswordChangeForm';
 
 const activityIcon = { review: Star, call: Phone, directions: MapPinned, whatsapp: MessageCircle, view: Activity };
 const activityLabel = { review: 'Reviewed', call: 'Called', directions: 'Opened directions to', whatsapp: 'Opened WhatsApp for', view: 'Viewed' };
@@ -14,7 +15,6 @@ const field = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3
 export default function UserActivity({ session, onLogout, onSessionUpdate }) {
   const [section, setSection] = useState('overview'); const [account, setAccount] = useState(null); const [activities, setActivities] = useState([]);
   const [profile, setProfile] = useState({ owner_name: session.user?.owner_name || session.user?.name || '', email: session.user?.email || '' });
-  const [password, setPassword] = useState({ current_password: '', new_password: '', confirm_password: '' });
   const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
 
   const load = useCallback(async (signal) => {
@@ -42,11 +42,6 @@ export default function UserActivity({ session, onLogout, onSessionUpdate }) {
     event.preventDefault(); const result = await request('/api/account/profile', { method: 'PATCH', body: JSON.stringify(profile) }, 'profile');
     if (result) { const next = { ...session, user: { ...session.user, ...result.user } }; onSessionUpdate(next); setAccount((value) => ({ ...value, ...result.user })); setNotice('Profile updated successfully.'); }
   };
-  const changePassword = async (event) => {
-    event.preventDefault(); if (password.new_password !== password.confirm_password) return setError('New passwords do not match.');
-    const result = await request('/api/account/password', { method: 'POST', body: JSON.stringify(password) }, 'password');
-    if (result) { setNotice(result.message); setTimeout(onLogout, 800); }
-  };
   const signOutAll = async () => {
     if (!window.confirm('Sign out this account on every device?')) return;
     const result = await request('/api/account/sign-out-all', { method: 'POST', body: '{}' }, 'signout');
@@ -63,6 +58,6 @@ export default function UserActivity({ session, onLogout, onSessionUpdate }) {
     {!loading && section === 'reports' && <div className="mt-5"><MyReports session={session} allowCreate /></div>}
     {!loading && section === 'rewards' && <div className="mt-6"><ReferralRewards session={session} /></div>}
     {!loading && account && section === 'security' && <div className="mt-5"><ChangePhoneForm session={session} currentPhone={account.phone} onChanged={onLogout} /></div>}
-    {!loading && section === 'security' && <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><form onSubmit={changePassword} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><KeyRound className="h-6 w-6 text-emerald-700" /><h2 className="mt-3 text-xl font-black">Change password</h2><p className="mt-1 text-sm text-slate-500">Changing your password signs out all devices, including this one.</p><label className="mt-5 block text-xs font-bold text-slate-600">Current password<input className={field} type="password" required autoComplete="current-password" value={password.current_password} onChange={(e) => setPassword({ ...password, current_password: e.target.value })} /></label><label className="mt-4 block text-xs font-bold text-slate-600">New password<input className={field} type="password" required minLength={10} autoComplete="new-password" value={password.new_password} onChange={(e) => setPassword({ ...password, new_password: e.target.value })} /></label><label className="mt-4 block text-xs font-bold text-slate-600">Confirm new password<input className={field} type="password" required minLength={10} autoComplete="new-password" value={password.confirm_password} onChange={(e) => setPassword({ ...password, confirm_password: e.target.value })} /></label><p className="mt-3 text-xs text-slate-500">Use at least 10 characters with a letter and number.</p><button disabled={busy === 'password'} className="mt-5 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{busy === 'password' ? 'Updating…' : 'Update password'}</button></form><aside className="h-fit rounded-3xl border border-rose-200 bg-rose-50 p-5 sm:p-6"><LogOut className="h-6 w-6 text-rose-700" /><h2 className="mt-3 text-lg font-black text-rose-950">Sign out every device</h2><p className="mt-2 text-sm leading-6 text-rose-800">Use this if you lost a phone or think somebody else accessed your account. Every existing login will stop working.</p><button type="button" onClick={signOutAll} disabled={busy === 'signout'} className="mt-5 rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{busy === 'signout' ? 'Signing out…' : 'Sign out all devices'}</button><p className="mt-4 text-xs text-rose-700">Last password change: {account.password_changed_at ? date(account.password_changed_at) : 'Not changed yet'}</p></aside></div>}
+    {!loading && section === 'security' && <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><PasswordChangeForm session={session} onChanged={onLogout} /><aside className="h-fit rounded-3xl border border-rose-200 bg-rose-50 p-5 sm:p-6"><LogOut className="h-6 w-6 text-rose-700" /><h2 className="mt-3 text-lg font-black text-rose-950">Sign out every device</h2><p className="mt-2 text-sm leading-6 text-rose-800">Use this if you lost a phone or think somebody else accessed your account. Every existing login will stop working.</p><button type="button" onClick={signOutAll} disabled={busy === 'signout'} className="mt-5 rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{busy === 'signout' ? 'Signing out…' : 'Sign out all devices'}</button><p className="mt-4 text-xs text-rose-700">Last password change: {account.password_changed_at ? date(account.password_changed_at) : 'Not changed yet'}</p></aside></div>}
   </section>;
 }

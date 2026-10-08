@@ -1,8 +1,8 @@
-# SMS verification and two-step login
+# SMS verification
 
-Customer and shop-owner accounts use Twilio Verify SMS OTP for signup, every login, and password recovery. The backend enforces each step even if the browser UI is bypassed.
+Customer and shop-owner accounts use Twilio Verify SMS OTP for signup, authenticated password changes, and password recovery. Regular login uses the registered phone number and password without OTP. The backend enforces the OTP-protected actions even if the browser UI is bypassed.
 
-Signup, login and password-reset verification tokens are purpose-bound and cannot be substituted for one another. Each token is bound to the exact E.164 phone number, expires after 10 minutes and is single-use. Password changes and resets increment the account authentication version so existing sessions stop working. OTP attempts are limited by IP and phone number.
+Signup, password-change, and password-reset verification tokens are purpose-bound and cannot be substituted for one another. Each token is bound to the exact E.164 phone number, expires after 10 minutes and is single-use. Password changes and resets increment the account authentication version so existing sessions stop working. OTP attempts are rate limited.
 
 ## Local development
 
@@ -28,4 +28,4 @@ TWILIO_VERIFY_SERVICE_SID=VA...
 
 Twilio requires phone numbers in E.164 form such as `+919876543210`. The app starts Verify with the `sms` channel and accepts verification only when VerificationCheck returns `approved`. Confirm Twilio account eligibility, sender and regulatory requirements for the countries where the application will operate.
 
-Until real credentials are supplied, production signup, login and password recovery return HTTP 503. Development OTP is intentionally unavailable in production. Credentials and real SMS delivery were not tested in this repository.
+Until real credentials are supplied, production signup, password change, and password recovery return HTTP 503. Normal phone-and-password login remains available. Development OTP is intentionally unavailable in production. Credentials and real SMS delivery were not tested in this repository.

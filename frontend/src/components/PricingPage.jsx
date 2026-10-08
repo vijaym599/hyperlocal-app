@@ -8,7 +8,7 @@ import { API_BASE_URL } from '../config';
 const plans = [
   {
     id: 'basic', name: 'Basic', eyebrow: 'Start small', price: 120,
-    billed: 'Billed monthly', products: '10', verified: false, insights: false,
+    billed: 'Billed monthly', products: '10', verified: false, insights: true,
     bestFor: 'Home businesses and small neighbourhood shops',
     unlock: 'A complete digital storefront at the lowest starting cost',
     summary: 'A simple online catalog for a small neighbourhood shop.',
@@ -20,6 +20,7 @@ const plans = [
       'Opening hours and live open/closed status',
       'Publish local offers and promotions',
       'Shop and product ratings & reviews',
+      'Customer activity and nearby demand reports',
       'CSV bulk upload and quick stock updates',
       'Standard business support'
     ]
@@ -109,10 +110,10 @@ const comparisonGroups = [
     title: 'Trust & reporting',
     rows: [
       { label: 'Verified Shop badge', values: [false, true, true, true] },
-      { label: 'Customer activity report', values: [false, true, true, true] },
-      { label: 'This month and total views', values: [false, true, true, true] },
-      { label: 'Unique visitor count', values: [false, true, true, true] },
-      { label: 'Calls, directions and WhatsApp counts', values: [false, true, true, true] }
+      { label: 'Customer activity report', values: [true, true, true, true] },
+      { label: 'This month and total views', values: [true, true, true, true] },
+      { label: 'Unique visitor count', values: [true, true, true, true] },
+      { label: 'Calls, directions and WhatsApp counts', values: [true, true, true, true] }
     ]
   },
   {
@@ -136,8 +137,8 @@ const insightItems = [
 
 const faqs = [
   { question: 'Is there a free shop plan?', answer: 'No. Basic is the lowest-priced shop plan at ₹120 per month.' },
-  { question: 'What is not included in Basic?', answer: 'Basic does not include the Verified Shop badge or the customer activity report. It also has a maximum of 10 products.' },
-  { question: 'What does the customer activity report show?', answer: 'It shows shop opens, calls, direction requests, WhatsApp chats, reviews and total interactions for this month and all time. It does not reveal customer phone numbers or personal details.' },
+  { question: 'What is not included in Basic?', answer: 'Basic does not include the Verified Shop badge and has a maximum of 10 products. Customer activity and nearby demand reports are included.' },
+  { question: 'What does the customer activity report show?', answer: 'It shows shop opens, product views, searches, favorites, shares, calls, directions, WhatsApp chats, reviews and total interactions for this month and all time. It does not reveal customer phone numbers or personal details.' },
   { question: 'Can I change my plan later?', answer: 'Yes. You can move to a larger plan as your catalog grows. A new paid term starts when the plan change is completed.' },
   { question: 'Does Enterprise include unlimited products?', answer: 'Yes. Enterprise has no catalog product-count limit in the application. Fair-use and technical safeguards still apply.' }
 ];
@@ -171,7 +172,7 @@ export default function PricingPage({ onBack, onStart }) {
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-bold text-emerald-200"><Store className="h-4 w-4" />Plans built for local shops</span>
             <h1 className="mt-6 max-w-3xl text-4xl font-black tracking-tight sm:text-6xl">Pay for the catalog size your shop needs.</h1>
-            <p className="mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">Every plan gives your business a public shop page and direct customer actions. Higher plans add more products, verification and clear activity insights.</p>
+            <p className="mt-5 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">Every plan gives your business a public shop page, direct customer actions, activity insights and nearby demand. Higher plans add more products and verification.</p>
             <a href="#compare-plans" className="mt-7 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15"><BarChart3 className="h-4 w-4" />Compare every feature</a>
           </div>
           <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-2xl backdrop-blur sm:p-8">
@@ -250,12 +251,12 @@ export default function PricingPage({ onBack, onStart }) {
             <div className="border-b border-white/10 p-7 sm:p-10 lg:border-b-0 lg:border-r">
               <PackageCheck className="h-8 w-8 text-emerald-400" />
               <h2 className="mt-5 text-3xl font-black">Start with the catalog you need today.</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-300">Basic keeps the starting cost low. Pro adds the two growth tools Basic does not include: verification and activity reporting.</p>
+              <p className="mt-3 text-sm leading-6 text-slate-300">Basic includes activity reporting and nearby demand. Pro adds verification and space for a larger catalog.</p>
               <button onClick={onStart} className="mt-7 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-400">Create your shop</button>
             </div>
             <div className="grid gap-4 p-7 sm:grid-cols-2 sm:p-10">
               <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-5"><ShieldCheck className="h-6 w-6 text-sky-400" /><h3 className="mt-4 font-black">Need a trust badge?</h3><p className="mt-2 text-sm leading-6 text-slate-400">Choose Pro, Advance or Enterprise. Basic does not include verification.</p></div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-5"><BarChart3 className="h-6 w-6 text-violet-400" /><h3 className="mt-4 font-black">Need activity insights?</h3><p className="mt-2 text-sm leading-6 text-slate-400">Choose Pro or above to see shop opens and customer action totals.</p></div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-5"><BarChart3 className="h-6 w-6 text-violet-400" /><h3 className="mt-4 font-black">Activity insights included</h3><p className="mt-2 text-sm leading-6 text-slate-400">Every plan shows shop opens, product interest, contact actions, reviews and nearby demand.</p></div>
             </div>
           </div>
         </section>

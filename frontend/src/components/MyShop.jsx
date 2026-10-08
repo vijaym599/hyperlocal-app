@@ -1,15 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, KeyRound, LayoutDashboard, Loader2, MessageCircle, MessageSquareWarning, Navigation, PhoneCall, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, KeyRound, LayoutDashboard, Loader2, MessageSquareWarning, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 import { referralFromSearch } from '../referrals.mjs';
 import PhoneVerification from './PhoneVerification';
 import ForgotPassword from './ForgotPassword';
-import LoginVerification from './LoginVerification';
+import PasswordChangeForm from './PasswordChangeForm';
 import ShopShare from './ShopShare';
 import ShopImage from './ShopImage';
 import IndianPhoneInput from './IndianPhoneInput';
-import { indianPhoneE164 } from '../phone.mjs';
+import { indianLocalPhone, indianPhoneE164 } from '../phone.mjs';
 import MyReports from './MyReports';
 import ChangePhoneForm from './ChangePhoneForm';
 
@@ -49,7 +49,6 @@ const AVAILABILITY_OPTIONS = [
   { value: 'low_stock', label: 'Low stock' },
   { value: 'out_of_stock', label: 'Out of stock' }
 ];
-const INSIGHT_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const availabilityBadgeClass = (status) => ({
   available: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -138,11 +137,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [resetNotice, setResetNotice] = useState('');
-  const [accountPassword, setAccountPassword] = useState({ current_password: '', new_password: '', confirm_password: '' });
-  const [passwordBusy, setPasswordBusy] = useState(false);
-  const [passwordError, setPasswordError] = useState('');
-  const [loginChallenge, setLoginChallenge] = useState(null);
   const [insights, setInsights] = useState(null);
+  const [latestReviews, setLatestReviews] = useState([]);
   const [insightsPeriod, setInsightsPeriod] = useState('total');
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
@@ -164,6 +160,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [subscriptionPromotion, setSubscriptionPromotion] = useState(null);
   const [subscriptionPromotionEligible, setSubscriptionPromotionEligible] = useState(true);
   const [subscriptionClock, setSubscriptionClock] = useState(() => Date.now());
+  const [customerDemand, setCustomerDemand] = useState([]);
+  const [demandLoading, setDemandLoading] = useState(false);
+  const [demandError, setDemandError] = useState('');
 
   // REGISTRATION FORM WITH CATEGORY
   const [regForm, setRegForm] = useState({
@@ -197,7 +196,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const activePlanDetails = SUBSCRIPTION_PLANS.find(p => p.id === (shopData?.subscription_plan || 'free')) || SUBSCRIPTION_PLANS[0];
   const maxProductsAllowed = activePlanDetails.limit;
-  const hasShopInsights = INSIGHT_PLANS.has(shopData?.subscription_plan);
+  const hasShopInsights = Boolean(shopData?.id);
   const currentDate = new Date(subscriptionClock);
   const subscriptionEnd = shopData?.subscription_ends_at ? new Date(shopData.subscription_ends_at) : null;
   const subscriptionDaysLeft = subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) ? Math.ceil((subscriptionEnd.getTime() - currentDate.getTime()) / 86400000) : null;
@@ -252,23 +251,45 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   }, [shopData?.id, shopData?.opening_time, shopData?.closing_time]);
 
   useEffect(() => {
-    if (dashboardSection !== 'insights' || !shopData?.id || !session?.token || !INSIGHT_PLANS.has(shopData.subscription_plan)) return;
-    const loadInsights = async () => {
-      setInsightsLoading(true);
+    if (dashboardSection !== 'insights' || !shopData?.id || !session?.token) return undefined;
+    let active = true;
+    const loadInsights = async (showLoading = false) => {
+      if (showLoading) setInsightsLoading(true);
       setInsightsError('');
       try {
-        const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/insights?period=${insightsPeriod}`, { headers: { Authorization: `Bearer ${session.token}` } });
+        const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/insights?period=${insightsPeriod}`, { cache: 'no-store', headers: { Authorization: `Bearer ${session.token}` } });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Unable to load shop insights.');
-        setInsights(data.insights || null);
+        if (active) { setInsights(data.insights || null); setLatestReviews(data.latest_reviews || []); }
       } catch (error) {
-        setInsightsError(error.message);
+        if (active) setInsightsError(error.message);
       } finally {
-        setInsightsLoading(false);
+        if (active) setInsightsLoading(false);
       }
     };
-    void loadInsights();
-  }, [shopData?.id, shopData?.subscription_plan, session?.token, insightsPeriod, dashboardSection]);
+    void loadInsights(true);
+    const timer = window.setInterval(() => void loadInsights(false), 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [shopData?.id, session?.token, insightsPeriod, dashboardSection]);
+
+  useEffect(() => {
+    if (dashboardSection !== 'demand' || !shopData?.id || !session?.token) return undefined;
+    let active = true;
+    const loadDemand = async (showLoading = false) => {
+      if (showLoading) setDemandLoading(true);
+      setDemandError('');
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/product-requests`, { cache: 'no-store', headers: { Authorization: `Bearer ${session.token}` } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to load nearby customer demand.');
+        if (active) setCustomerDemand(data.requests || []);
+      } catch (error) { if (active) setDemandError(error.message); }
+      finally { if (active) setDemandLoading(false); }
+    };
+    void loadDemand(true);
+    const timer = window.setInterval(() => void loadDemand(false), 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [dashboardSection, session?.token, shopData?.id]);
 
   const updateSubscription = async (action, plan = null) => {
     if (!shopData?.id) return;
@@ -474,12 +495,6 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
       if (!res.ok) throw new Error(data.error || 'Login failed');
 
-      if (data.requires_otp) {
-        setLoginChallenge(data);
-        setViewMode('login_otp');
-        return;
-      }
-
       if (typeof onLoginSuccess === 'function') {
         onLoginSuccess({ token: data.token, user: data.user, shop: data.shop });
       }
@@ -492,21 +507,6 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     }
   };
 
-  const handleAccountPasswordChange = async (event) => {
-    event.preventDefault();
-    setPasswordError('');
-    if (accountPassword.new_password !== accountPassword.confirm_password) return setPasswordError('New passwords do not match.');
-    setPasswordBusy(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/account/password`, { method: 'POST', headers: authenticatedJsonHeaders(), body: JSON.stringify(accountPassword) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to change password.');
-      window.alert(data.message);
-      onLogout?.();
-    } catch (error) { setPasswordError(error.message); }
-    finally { setPasswordBusy(false); }
-  };
-
   const handleRegisterSubmit = async (planId, paymentId = null) => {
     setLoading(true);
     setErrorMsg('');
@@ -515,6 +515,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const payload = { 
         ...regForm,
         account_phone: indianPhoneE164(regForm.account_phone),
+        phone: indianPhoneE164(regForm.phone),
+        whatsapp_number: regForm.whatsapp_number ? indianPhoneE164(regForm.whatsapp_number) : '',
         selected_plan: planId,
         payment_id: paymentId,
         phone_verification_token: phoneVerificationToken
@@ -759,8 +761,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       name: shopData?.name || shopData?.shop_name || '',
       category: shopData?.category || '',
       address: shopData?.address || '',
-      phone: shopData?.phone || '',
-      whatsapp_number: shopData?.whatsapp_number || '',
+      phone: indianLocalPhone(shopData?.phone),
+      whatsapp_number: indianLocalPhone(shopData?.whatsapp_number),
       image_url: shopData?.image_url || '',
       opening_hours: shopData?.opening_hours || '',
       opening_time: shopData?.opening_time ? String(shopData.opening_time).slice(0, 5) : '',
@@ -780,7 +782,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const res = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}`, {
         method: 'PUT',
         headers: authenticatedJsonHeaders(),
-        body: JSON.stringify(shopForm)
+        body: JSON.stringify({
+          ...shopForm,
+          phone: shopForm.phone ? indianPhoneE164(shopForm.phone) : '',
+          whatsapp_number: shopForm.whatsapp_number ? indianPhoneE164(shopForm.whatsapp_number) : ''
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to update shop details');
@@ -818,10 +824,6 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     return <div className="mx-auto my-12 max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"><ForgotPassword initialPhone={loginData.phone} onBack={() => setViewMode('login')} onComplete={(phone) => { setLoginData({ phone, password: '' }); setResetNotice('Password reset successfully. Sign in with your new password.'); setViewMode('login'); }} /></div>;
   }
 
-  if (!session?.token && viewMode === 'login_otp' && loginChallenge) {
-    return <div className="mx-auto my-12 max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"><LoginVerification phone={indianPhoneE164(loginData.phone)} challenge={loginChallenge} onBack={() => { setLoginChallenge(null); setViewMode('login'); }} onVerified={(data) => { onLoginSuccess?.({ token: data.token, user: data.user, shop: data.shop }); setShopData(data.shop); setViewMode('dashboard'); }} /></div>;
-  }
-
   if (!session?.token && viewMode === 'login') {
     return (
       <div className="mx-3 my-3 max-w-md rounded-2xl border border-slate-200 bg-white p-5 font-sans shadow-sm sm:mx-auto sm:my-12 sm:p-8">
@@ -838,7 +840,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
-            <div className="relative"><input type={showLoginPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Password" value={loginData.password} onChange={(e) => setLoginData({ ...loginData, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} aria-label={showLoginPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
+            <div className="relative"><input type={showLoginPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your shop-owner account password" value={loginData.password} onChange={(e) => setLoginData({ ...loginData, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} aria-label={showLoginPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
           </div>
           <button type="button" onClick={() => { setErrorMsg(''); setResetNotice(''); setViewMode('forgot'); }} className="-mt-1 text-left text-xs font-semibold text-emerald-700 hover:underline">Forgot password?</button>
           <button type="submit" disabled={loading} className="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer flex items-center justify-center gap-2">
@@ -861,15 +863,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             
             {errorMsg && <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">{errorMsg}</div>}
 
-            <input type="text" required placeholder="Owner Name *" value={regForm.owner_name} onChange={(e) => setRegForm({ ...regForm, owner_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="text" required placeholder="Owner's full name, e.g. Ravi Kumar *" value={regForm.owner_name} onChange={(e) => setRegForm({ ...regForm, owner_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <IndianPhoneInput value={regForm.account_phone} onChange={(account_phone) => { setRegForm({ ...regForm, account_phone }); setPhoneVerificationToken(''); }} label="Shop-owner account mobile number" />
             <PhoneVerification key={regForm.account_phone} phone={indianPhoneE164(regForm.account_phone)} verified={Boolean(phoneVerificationToken)} onVerified={setPhoneVerificationToken} />
-            <input type="email" autoComplete="email" placeholder="Email (optional)" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <input type="email" autoComplete="email" placeholder="Owner email for account updates (optional)" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <label className="block text-xs font-semibold text-slate-600">Referral code (optional)<input type="text" maxLength={26} value={regForm.referral_code} onChange={(e) => setRegForm({ ...regForm, referral_code: e.target.value.toUpperCase().trim() })} placeholder="Code shared by the customer who invited you" className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-2.5 font-mono text-sm" /><span className="mt-1 block font-normal text-slate-400">They earn 20% of your first subscription after payment review. Your plan price stays the same.</span></label>
-            <div className="relative"><input type={showRegisterPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={10} maxLength={72} placeholder="Password (10+ characters, letter & number) *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowRegisterPassword(!showRegisterPassword)} aria-label={showRegisterPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showRegisterPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
+            <div className="relative"><input type={showRegisterPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={10} maxLength={72} placeholder="Create password: 10+ characters with a letter and number *" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="w-full px-4 py-2.5 pr-11 border border-slate-300 rounded-xl text-sm" /><button type="button" onClick={() => setShowRegisterPassword(!showRegisterPassword)} aria-label={showRegisterPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-800">{showRegisterPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
             
-            <input type="text" required placeholder="Shop Name *" value={regForm.shop_name} onChange={(e) => setRegForm({ ...regForm, shop_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="e.g. Chennai" value={regForm.city} onChange={e => setRegForm({ ...regForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
+            <input type="text" required placeholder="Shop name, e.g. Sri Murugan Stores *" value={regForm.shop_name} onChange={(e) => setRegForm({ ...regForm, shop_name: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="City name, e.g. Chennai" value={regForm.city} onChange={e => setRegForm({ ...regForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
             
             {/* SHOP CATEGORY SELECT DROPDOWN */}
             <select
@@ -884,10 +886,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               ))}
             </select>
 
-            <textarea required rows="2" placeholder="Shop address *" value={regForm.address} onChange={(e) => setRegForm({ ...regForm, address: e.target.value })} className="w-full resize-none px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="tel" required placeholder="Call number with country code, e.g. +919876543210 *" value={regForm.phone} onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="tel" placeholder="WhatsApp number (optional)" value={regForm.whatsapp_number} onChange={(e) => setRegForm({ ...regForm, whatsapp_number: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <input type="text" placeholder="Opening hours, e.g. 9 AM – 9 PM" value={regForm.opening_hours} onChange={(e) => setRegForm({ ...regForm, opening_hours: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <textarea required rows="2" placeholder="Full shop address with area and pincode *" value={regForm.address} onChange={(e) => setRegForm({ ...regForm, address: e.target.value })} className="w-full resize-none px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
+            <IndianPhoneInput value={regForm.phone} onChange={(phone) => setRegForm({ ...regForm, phone })} label="Shop call mobile number" />
+            <IndianPhoneInput value={regForm.whatsapp_number} onChange={(whatsapp_number) => setRegForm({ ...regForm, whatsapp_number })} label="Shop WhatsApp mobile number" required={false} />
+            <input type="text" placeholder="Customer-visible hours, e.g. Mon–Sun, 9 AM–9 PM" value={regForm.opening_hours} onChange={(e) => setRegForm({ ...regForm, opening_hours: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={regForm.opening_time} onChange={(e) => setRegForm({ ...regForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={regForm.closing_time} onChange={(e) => setRegForm({ ...regForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
             
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
@@ -898,8 +900,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 </button>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <input type="number" step="any" required placeholder="Latitude *" value={regForm.latitude} onChange={(e) => setRegForm({ ...regForm, latitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
-                <input type="number" step="any" required placeholder="Longitude *" value={regForm.longitude} onChange={(e) => setRegForm({ ...regForm, longitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
+                <input type="number" step="any" required placeholder="Shop latitude, e.g. 13.0827 *" value={regForm.latitude} onChange={(e) => setRegForm({ ...regForm, latitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
+                <input type="number" step="any" required placeholder="Shop longitude, e.g. 80.2707 *" value={regForm.longitude} onChange={(e) => setRegForm({ ...regForm, longitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
               </div>
             </div>
             
@@ -967,6 +969,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 ['catalog', 'Products & stock', Package],
                 ['offers', 'Offers', Tag],
                 ...(hasShopInsights ? [['insights', 'Customer activity', BarChart3]] : []),
+                ['demand', 'Customer demand', Search],
                 ['billing', 'Billing', CalendarDays],
                 ['notifications', `Notifications${shopNotifications.some((item) => !item.read_at) ? ` (${shopNotifications.filter((item) => !item.read_at).length})` : ''}`, Bell],
                 ['reports', 'Complaints', MessageSquareWarning],
@@ -1052,18 +1055,40 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       {dashboardSection === 'billing' && subscriptionPromotion && <div className={`mb-4 rounded-xl border p-4 text-sm font-bold ${subscriptionPromotionEligible ? 'border-violet-200 bg-violet-50 text-violet-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Gift className="mr-2 inline h-4 w-4" />{subscriptionPromotionEligible ? <>{subscriptionPromotion.name}: pay for {subscriptionPromotion.purchase_months} month and get {subscriptionPromotion.bonus_months} months free on {subscriptionPromotion.eligible_plans.map((plan) => plan.charAt(0).toUpperCase() + plan.slice(1)).join(', ')}. One redemption per shop. Ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</> : <>This shop has already used {subscriptionPromotion.name}. Renewals and plan changes use the regular one-month price unless a new campaign is created.</>}</div>}
       {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p>{promotionApplies(plan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-[11px] font-black text-violet-800">+ {subscriptionPromotion.bonus_months} free months</p>}<button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
 
-      {dashboardSection === 'security' && <section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><form onSubmit={handleAccountPasswordChange} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><KeyRound className="h-6 w-6 text-emerald-700" /><h2 className="mt-3 text-xl font-black text-slate-900">Change account password</h2><p className="mt-1 text-sm leading-6 text-slate-500">Use the shop owner account’s current password. A successful change signs out every device.</p>{passwordError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{passwordError}</p>}<label className="mt-5 block text-xs font-bold text-slate-600">Current password<input required type="password" autoComplete="current-password" value={accountPassword.current_password} onChange={(event) => setAccountPassword({ ...accountPassword, current_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">New password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.new_password} onChange={(event) => setAccountPassword({ ...accountPassword, new_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label className="mt-4 block text-xs font-bold text-slate-600">Confirm new password<input required minLength={10} type="password" autoComplete="new-password" value={accountPassword.confirm_password} onChange={(event) => setAccountPassword({ ...accountPassword, confirm_password: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><p className="mt-3 text-xs text-slate-500">Use at least 10 characters with a letter and number.</p><button disabled={passwordBusy} className="mt-5 flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{passwordBusy && <Loader2 className="h-4 w-4 animate-spin" />}{passwordBusy ? 'Updating…' : 'Update password'}</button></form><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ SMS OTP at every login</li><li>✓ SMS OTP password recovery</li><li>✓ Secure password hashing</li><li>✓ One-time verification tokens</li><li>✓ All sessions revoked after a reset</li></ul><p className="mt-5 text-xs leading-5 text-emerald-800">If you cannot remember the current password, sign out and choose <strong>Forgot password?</strong> on the login screen.</p></aside></section>}
 
-      {hasShopInsights && dashboardSection === 'insights' && <section className="mb-6 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><BarChart3 className="h-5 w-5 text-violet-600" /> Shop insights</h2><p className="mt-1 text-sm text-slate-600">{insightsPeriod === 'monthly' ? 'This month’s' : 'All-time'} activity from signed-in customers who engage with your shop.</p></div><div className="flex items-center gap-2"><div className="rounded-xl border border-violet-200 bg-white p-1"><button type="button" onClick={() => setInsightsPeriod('monthly')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'monthly' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>This month</button><button type="button" onClick={() => setInsightsPeriod('total')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'total' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>Total</button></div><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">Pro feature</span></div></div>{insightsLoading ? <div className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading insights…</div> : insightsError ? <p className="mt-4 text-sm text-rose-600">{insightsError}</p> : <><div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5"><div className="rounded-xl border border-violet-100 bg-white p-4"><Eye className="h-4 w-4 text-violet-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.views || 0}</p><p className="text-xs font-semibold text-slate-500">Catalog views</p><p className="mt-1 text-[11px] text-slate-400">{insights?.unique_viewers || 0} unique visitors</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><Navigation className="h-4 w-4 text-emerald-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.directions || 0}</p><p className="text-xs font-semibold text-slate-500">Directions</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><PhoneCall className="h-4 w-4 text-sky-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.calls || 0}</p><p className="text-xs font-semibold text-slate-500">Calls</p></div><div className="rounded-xl border border-violet-100 bg-white p-4"><MessageCircle className="h-4 w-4 text-emerald-600" /><p className="mt-3 text-2xl font-extrabold text-slate-900">{insights?.whatsapp_messages || 0}</p><p className="text-xs font-semibold text-slate-500">WhatsApp chats</p></div><div className="rounded-xl border border-violet-200 bg-violet-600 p-4 text-white"><BarChart3 className="h-4 w-4 text-violet-100" /><p className="mt-3 text-2xl font-extrabold">{insights?.total_interactions || 0}</p><p className="text-xs font-semibold text-violet-100">Total interactions</p></div></div><p className="mt-3 text-[11px] text-slate-500">Interactions include catalog views, calls, directions, WhatsApp chats, and reviews. Personal customer details are never shown.</p></>}</section>}
+      {hasShopInsights && dashboardSection === 'insights' && <section className="mb-6 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><BarChart3 className="h-5 w-5 text-violet-600" />Shop insights</h2><p className="mt-1 text-sm text-slate-600">{insightsPeriod === 'monthly' ? 'This month’s' : 'All-time'} activity from guests and signed-in customers. Updates automatically every 30 seconds.</p></div><div className="rounded-xl border border-violet-200 bg-white p-1"><button type="button" onClick={() => setInsightsPeriod('monthly')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'monthly' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>This month</button><button type="button" onClick={() => setInsightsPeriod('total')} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${insightsPeriod === 'total' ? 'bg-violet-600 text-white' : 'text-slate-600'}`}>Total</button></div></div>
+        {insightsLoading ? <div className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading insights…</div> : insightsError ? <p className="mt-4 text-sm text-rose-600">{insightsError}</p> : <>
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+            {[
+              ['Catalog views', insights?.views, `${insights?.unique_viewers || 0} unique visitors`],
+              ['Product details', insights?.product_views, 'Detail opens'],
+              ['Catalog searches', insights?.searches, 'Searches inside your shop'],
+              ['Calls', insights?.calls, 'Call button taps'],
+              ['WhatsApp chats', insights?.whatsapp_messages, 'Chat starts'],
+              ['Directions', insights?.directions, 'Map requests'],
+              ['Favorites', insights?.favorites, 'Products saved'],
+              ['Shares', insights?.shares, 'Shop and product shares'],
+              ['Reviews', insights?.reviews, 'Review submissions'],
+              ['Total interactions', insights?.total_interactions, 'All tracked actions'],
+            ].map(([label, value, hint]) => <article key={label} className={`rounded-xl border p-4 ${label === 'Total interactions' ? 'border-violet-200 bg-violet-600 text-white' : 'border-violet-100 bg-white'}`}><p className="text-2xl font-extrabold">{value || 0}</p><p className={`text-xs font-semibold ${label === 'Total interactions' ? 'text-violet-100' : 'text-slate-600'}`}>{label}</p><p className={`mt-1 text-[11px] ${label === 'Total interactions' ? 'text-violet-200' : 'text-slate-400'}`}>{hint}</p></article>)}
+          </div>
+          <div className="mt-6 rounded-2xl border border-violet-100 bg-white p-4"><h3 className="font-bold text-slate-900">Latest customer reviews</h3>{latestReviews.length === 0 ? <p className="mt-3 text-sm text-slate-500">No reviews yet.</p> : <div className="mt-3 space-y-3">{latestReviews.map((review) => <article key={`${review.target}-${review.id}`} className="rounded-xl bg-slate-50 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold text-slate-800">{review.owner_name || 'Customer'} · {review.rating}/5</p><time className="text-[11px] text-slate-400">{new Date(review.updated_at).toLocaleDateString('en-IN')}</time></div>{review.product_name && <p className="mt-1 text-xs font-semibold text-emerald-700">Product: {review.product_name}</p>}{review.comment && <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{review.comment}</p>}</article>)}</div>}</div>
+          <p className="mt-3 text-[11px] text-slate-500">Counts are aggregated. Customer phone numbers and personal contact details are never shown.</p>
+        </>}
+      </section>}
 
+      {dashboardSection === 'demand' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm"><div><h2 className="text-xl font-black text-slate-900">Nearby customer demand</h2><p className="mt-1 text-sm text-slate-500">Product requests whose selected distance includes your shop. Updates automatically every 30 seconds.</p></div>{demandError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{demandError}</p>}{demandLoading && !customerDemand.length ? <p className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading customer demand…</p> : !customerDemand.length ? <p className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">No matching customer requests yet.</p> : <div className="mt-5 space-y-3">{customerDemand.map((request) => <article key={request.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold text-slate-900">{request.requested_product}</p><p className="mt-1 text-xs text-slate-500">{request.distance_km == null ? 'Location not supplied' : `${request.distance_km} km from your shop`}{request.radius_km ? ` · Customer selected ${request.radius_km} km` : ' · Any distance'}{request.phone_last_four ? ` · Contact ending ${request.phone_last_four}` : ''}</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase text-slate-600">{request.status}</span></div><time className="mt-3 block text-[11px] text-slate-400">Requested {new Date(request.created_at).toLocaleString('en-IN')}</time></article>)}</div>}</section>}
+
+      {dashboardSection === 'security' && <section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><PasswordChangeForm session={session} onChanged={onLogout} /><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ OTP required at account creation</li><li>✓ OTP required to change or reset a password</li><li>✓ Regular login uses phone and password</li><li>✓ All sessions revoked after a password change</li></ul></aside></section>}
       {dashboardSection === 'security' && <div className="mb-5"><ChangePhoneForm session={session} currentPhone={session?.user?.phone} onChanged={onLogout} compact /></div>}
 
       {dashboardSection === 'offers' && <section className="mb-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><Tag className="h-5 w-5 text-orange-600" /> Shop offers</h2><p className="mt-1 text-sm text-slate-600">Publish offers that customers can see from the Offers menu.</p></div><span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">{shopOffers.filter((offer) => offer.is_active).length} active</span></div>
         <form onSubmit={handleCreateOffer} className="mt-5 grid gap-3 rounded-xl border border-orange-100 bg-white p-4 md:grid-cols-2">
           <input required maxLength="120" value={offerForm.title} onChange={(event) => setOfferForm({ ...offerForm, title: event.target.value })} placeholder="Offer title, e.g. Weekend grocery sale" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
-          <input maxLength="80" value={offerForm.discount_text} onChange={(event) => setOfferForm({ ...offerForm, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
-          <textarea maxLength="500" rows="2" value={offerForm.description} onChange={(event) => setOfferForm({ ...offerForm, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm md:col-span-2" />
+          <input maxLength="80" value={offerForm.discount_text} onChange={(event) => setOfferForm({ ...offerForm, discount_text: event.target.value })} placeholder="Discount shown to customers, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+          <textarea maxLength="500" rows="2" value={offerForm.description} onChange={(event) => setOfferForm({ ...offerForm, description: event.target.value })} placeholder="Offer terms, eligible items and conditions (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm md:col-span-2" />
           <label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={offerForm.valid_until} onChange={(event) => setOfferForm({ ...offerForm, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label>
           <button disabled={offersLoading || !subscriptionIsActive} className="self-end rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-40">{!subscriptionIsActive ? 'Renew to publish offers' : offersLoading ? 'Saving…' : 'Publish offer'}</button>
         </form>
@@ -1073,7 +1098,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         </div>
       </section>}
 
-      {editingOffer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"><form onSubmit={handleUpdateOffer} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Edit offer</h2><p className="mt-1 text-sm text-slate-500">Update the details customers see. Expiry can only be today or a future date.</p></div><button type="button" onClick={() => setEditingOffer(null)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 grid gap-3"><input required maxLength="120" value={editingOffer.title || ''} onChange={(event) => setEditingOffer({ ...editingOffer, title: event.target.value })} placeholder="Offer title" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><input maxLength="80" value={editingOffer.discount_text || ''} onChange={(event) => setEditingOffer({ ...editingOffer, discount_text: event.target.value })} placeholder="Offer label, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><textarea maxLength="500" rows="3" value={editingOffer.description || ''} onChange={(event) => setEditingOffer({ ...editingOffer, description: event.target.value })} placeholder="Short offer details or terms (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={editingOffer.valid_until || ''} onChange={(event) => setEditingOffer({ ...editingOffer, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Cancel</button><button disabled={offersLoading || !subscriptionIsActive} className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{!subscriptionIsActive ? 'Renew subscription' : offersLoading ? 'Saving…' : 'Save changes'}</button></div></form></div>}
+      {editingOffer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"><form onSubmit={handleUpdateOffer} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Edit offer</h2><p className="mt-1 text-sm text-slate-500">Update the details customers see. Expiry can only be today or a future date.</p></div><button type="button" onClick={() => setEditingOffer(null)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 grid gap-3"><input required maxLength="120" value={editingOffer.title || ''} onChange={(event) => setEditingOffer({ ...editingOffer, title: event.target.value })} placeholder="Offer title, e.g. Weekend grocery sale" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><input maxLength="80" value={editingOffer.discount_text || ''} onChange={(event) => setEditingOffer({ ...editingOffer, discount_text: event.target.value })} placeholder="Discount shown to customers, e.g. 20% OFF" className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><textarea maxLength="500" rows="3" value={editingOffer.description || ''} onChange={(event) => setEditingOffer({ ...editingOffer, description: event.target.value })} placeholder="Offer terms, eligible items and conditions (optional)" className="resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /><label className="text-xs font-semibold text-slate-600">Valid until (optional)<input type="date" min={todayIso} value={editingOffer.valid_until || ''} onChange={(event) => setEditingOffer({ ...editingOffer, valid_until: event.target.value })} className="mt-1 block w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" disabled={offersLoading} onClick={() => setEditingOffer(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Cancel</button><button disabled={offersLoading || !subscriptionIsActive} className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{!subscriptionIsActive ? 'Renew subscription' : offersLoading ? 'Saving…' : 'Save changes'}</button></div></form></div>}
 
       {editingShop && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
@@ -1081,15 +1106,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 text-emerald-600" /> Edit shop details</h3><button onClick={() => setEditingShop(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button></div>
             <form onSubmit={handleUpdateShop} className="space-y-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center gap-4"><ShopImage shop={shopForm} className="h-24 w-24 shrink-0 rounded-2xl border border-slate-200 object-cover" /><div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-800">Shop image</p><p className="mt-1 text-xs leading-5 text-slate-500">JPG, PNG or WebP. The image is optimized before saving.</p><div className="mt-3 flex flex-wrap gap-2"><label className="cursor-pointer rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><Upload className="mr-1 inline h-3.5 w-3.5" />Choose image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleShopImageUpload} className="hidden" /></label>{shopForm.image_url && <button type="button" onClick={() => { setShopForm({ ...shopForm, image_url: '' }); setShopImageUploadMessage('Image removed. Save details to apply.'); }} className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700">Remove</button>}</div></div></div>{shopImageUploadMessage && <p className="mt-3 text-xs font-medium text-slate-600">{shopImageUploadMessage}</p>}</div>
-              <input required value={shopForm.name} onChange={(e) => setShopForm({ ...shopForm, name: e.target.value })} placeholder="Shop name" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="e.g. Chennai" value={shopForm.city} onChange={e => setShopForm({ ...shopForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
+              <input required value={shopForm.name} onChange={(e) => setShopForm({ ...shopForm, name: e.target.value })} placeholder="Shop name, e.g. Sri Murugan Stores" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="City name, e.g. Chennai" value={shopForm.city} onChange={e => setShopForm({ ...shopForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
               <select required value={shopForm.category} onChange={(e) => setShopForm({ ...shopForm, category: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><option value="" disabled>Select category</option>{SHOP_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>
-              <textarea rows="2" value={shopForm.address} onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })} placeholder="Shop address" className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><input type="tel" value={shopForm.phone} onChange={(e) => setShopForm({ ...shopForm, phone: e.target.value })} placeholder="Call number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="tel" value={shopForm.whatsapp_number} onChange={(e) => setShopForm({ ...shopForm, whatsapp_number: e.target.value })} placeholder="WhatsApp number" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
-              <input type="text" value={shopForm.opening_hours} onChange={(e) => setShopForm({ ...shopForm, opening_hours: e.target.value })} placeholder="Opening hours" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <textarea rows="2" value={shopForm.address} onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })} placeholder="Full shop address with area and pincode" className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><IndianPhoneInput value={shopForm.phone} onChange={(phone) => setShopForm({ ...shopForm, phone })} label="Shop call mobile number" required={false} /><IndianPhoneInput value={shopForm.whatsapp_number} onChange={(whatsapp_number) => setShopForm({ ...shopForm, whatsapp_number })} label="Shop WhatsApp mobile number" required={false} /></div>
+              <input type="text" value={shopForm.opening_hours} onChange={(e) => setShopForm({ ...shopForm, opening_hours: e.target.value })} placeholder="Customer-visible hours, e.g. Mon–Sun, 9 AM–9 PM" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={shopForm.opening_time} onChange={(e) => setShopForm({ ...shopForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={shopForm.closing_time} onChange={(e) => setShopForm({ ...shopForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
-              <div className="grid grid-cols-2 gap-3"><input type="number" step="any" value={shopForm.latitude} onChange={(e) => setShopForm({ ...shopForm, latitude: e.target.value })} placeholder="Latitude" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="number" step="any" value={shopForm.longitude} onChange={(e) => setShopForm({ ...shopForm, longitude: e.target.value })} placeholder="Longitude" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
-              <input type="url" value={shopForm.google_map_link} onChange={(e) => setShopForm({ ...shopForm, google_map_link: e.target.value })} placeholder="Google Maps link (optional)" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <div className="grid grid-cols-2 gap-3"><input type="number" step="any" value={shopForm.latitude} onChange={(e) => setShopForm({ ...shopForm, latitude: e.target.value })} placeholder="Shop latitude, e.g. 13.0827" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="number" step="any" value={shopForm.longitude} onChange={(e) => setShopForm({ ...shopForm, longitude: e.target.value })} placeholder="Shop longitude, e.g. 80.2707" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
+              <input type="url" value={shopForm.google_map_link} onChange={(e) => setShopForm({ ...shopForm, google_map_link: e.target.value })} placeholder="Paste the shop's Google Maps link (optional)" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="flex gap-2 pt-2"><button type="button" onClick={() => setEditingShop(false)} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-600">Cancel</button><button disabled={loading} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white">{loading ? 'Saving...' : 'Save details'}</button></div>
             </form>
           </div>
@@ -1105,22 +1130,22 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <form onSubmit={handleAddProduct} className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Product Name *</label>
-              <input type="text" required placeholder="e.g. Rice 5kg" value={newProduct.name} onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              <input type="text" required placeholder="Product name and pack size, e.g. Ponni Rice 5 kg" value={newProduct.name} onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Price (₹) *</label>
-              <input type="number" min="0" max="99999999.99" step="0.01" required placeholder="250" value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              <input type="number" min="0" max="99999999.99" step="0.01" required placeholder="Selling price in ₹, e.g. 250" value={newProduct.price} onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Brand / model</label>
-              <input type="text" placeholder="e.g. HP 65W" value={newProduct.brand} onChange={(e) => setNewProduct({ ...newProduct, brand: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              <input type="text" placeholder="Brand name, e.g. Aashirvaad (optional)" value={newProduct.brand} onChange={(e) => setNewProduct({ ...newProduct, brand: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm" />
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Description</label>
-              <textarea rows="2" placeholder="Compatibility, size, or useful details" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full resize-none px-3 py-2 border border-slate-300 rounded-xl text-sm" />
+              <textarea rows="2" placeholder="Size, model, compatibility or other product details (optional)" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full resize-none px-3 py-2 border border-slate-300 rounded-xl text-sm" />
             </div>
 
             <div>
@@ -1142,7 +1167,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
               <div className="text-[10px] text-slate-400 text-center">OR Paste Image URL</div>
 
-              <input type="url" placeholder="https://example.com/image.jpg" value={newProduct.image_url} onChange={(e) => setNewProduct({ ...newProduct, image_url: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
+              <input type="url" placeholder="Paste a product image URL, e.g. https://example.com/product.jpg" value={newProduct.image_url} onChange={(e) => setNewProduct({ ...newProduct, image_url: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
 
               <p className="text-center text-[10px] text-slate-500">Uploads are resized and optimized for faster loading.</p>
               {imageUploadMessage && <p className={`text-center text-[10px] font-medium ${imageUploadMessage.includes('ready') ? 'text-emerald-700' : imageUploadMessage.includes('Optimizing') ? 'text-slate-500' : 'text-rose-600'}`}>{imageUploadMessage}</p>}
@@ -1166,7 +1191,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         <div className="min-w-0 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-bold text-slate-800 text-lg">Listed Products ({products.length})</h3>
-            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }} placeholder="Search products" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
+            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }} placeholder="Search catalog by product name or brand" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
           </div>
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="text-xs font-semibold text-slate-600">Stock filter <select value={stockFilter} onChange={event => { setStockFilter(event.target.value); setProductPage(1); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="all">All products</option>{AVAILABILITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span className="text-xs text-slate-500">{filteredProducts.length} matching products</span></div>
@@ -1286,7 +1311,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
                 <input 
                   type="url" 
-                  placeholder="https://example.com/image.jpg" 
+                  placeholder="Paste a product image URL, e.g. https://example.com/product.jpg"
                   value={editingProduct.image_url || ''} 
                   onChange={(e) => setEditingProduct({ ...editingProduct, image_url: e.target.value })} 
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" 

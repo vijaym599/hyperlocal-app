@@ -6,6 +6,9 @@ import DistanceSelector from './DistanceSelector';
 import { readDiscoveryCache, writeDiscoveryCache, discoveryKey } from '../discoveryCache.mjs';
 import { API_BASE_URL } from '../config';
 import ShopImage from './ShopImage';
+import IndianPhoneInput from './IndianPhoneInput';
+import { indianPhoneE164 } from '../phone.mjs';
+import { trackShopActivity } from '../activity.mjs';
 
 // Instagram Story Style Categories Data
 const CATEGORIES = [
@@ -436,8 +439,22 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
 
   // 3. Open Google Maps
   const saveActivity = (action, shopId, productId) => {
-    if (!session?.token || !shopId) return;
-    fetch(`${API_BASE_URL}/api/activity/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` }, body: JSON.stringify({ shop_id: shopId, product_id: productId }) }).catch(() => {});
+    trackShopActivity(action, shopId, { session, productId, source: 'nearby-search' });
+  };
+
+  const openShopCatalog = (product) => {
+    if (!product?.shop_id) return;
+    setSelectedProduct(null);
+    onOpenShop?.({
+      id: product.shop_id,
+      name: product.shop_name || 'Local Shop',
+      address: product.shop_address || '',
+      phone: product.shop_phone || '',
+      whatsapp_number: product.shop_whatsapp_number || '',
+      latitude: product.shop_lat,
+      longitude: product.shop_lng,
+      is_verified: product.shop_is_verified,
+    });
   };
 
   const handleGetDirections = (lat, lng, name, address, shopId, productId) => {
@@ -478,7 +495,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requested_product: requestedProduct,
-          customer_phone: requestPhone,
+          customer_phone: requestPhone ? indianPhoneE164(requestPhone) : null,
           latitude: userLocation?.lat,
           longitude: userLocation?.lng,
           radius_km: radiusKm ? Number(radiusKm) : null
@@ -498,6 +515,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const toggleFavorite = (product) => {
     setFavorites((current) => {
       const exists = current.some((item) => item.id === product.id);
+      if (!exists) saveActivity('favorite', product.shop_id, product.id);
       const next = exists ? current.filter((item) => item.id !== product.id) : [...current, { id: product.id, name: product.name, shop_name: product.shop_name }];
       localStorage.setItem('nearbuy-favorites', JSON.stringify(next));
       return next;
@@ -506,6 +524,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
 
   const shareProduct = async (product) => {
     const text = `${product.name} at ${product.shop_name} — ₹${product.price}`;
+    saveActivity('share', product.shop_id, product.id);
     try {
       const url = new URL(productUrl(product), window.location.origin).href;
       if (navigator.share) await navigator.share({ title: product.name, text, url });
@@ -592,7 +611,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
 
             {showAreaPicker && <div className="mt-2">
               <form onSubmit={findArea} className="flex gap-2">
-                <input required minLength={2} maxLength={120} value={areaQuery} onChange={(event) => setAreaQuery(event.target.value)} aria-label="Area or pincode in India" placeholder="Area or pincode" className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white px-3 py-2 text-xs font-medium text-slate-800 outline-none placeholder:text-slate-400" />
+                <input required minLength={2} maxLength={120} value={areaQuery} onChange={(event) => setAreaQuery(event.target.value)} aria-label="Area or pincode in India" placeholder="Enter an area or 6-digit pincode, e.g. Anna Nagar or 600040" className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white px-3 py-2 text-xs font-medium text-slate-800 outline-none placeholder:text-slate-400" />
                 <button type="submit" disabled={findingArea || areaQuery.trim().length < 2} className="shrink-0 rounded-lg bg-emerald-400 px-3 py-2 text-xs font-bold text-emerald-950 disabled:opacity-50">{findingArea ? 'Finding…' : 'Find'}</button>
               </form>
               {areaError && <p role="alert" className="mt-2 text-xs text-rose-200">{areaError}</p>}
@@ -608,7 +627,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
               <span className="sr-only">Search products or shops nearby</span>
               <input
                 type="search"
-                placeholder="Search products or shops nearby..."
+                placeholder="Search a product, brand or shop, e.g. rice or pharmacy"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onFocus={() => setShowSuggestions(true)}
@@ -705,7 +724,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600 sm:left-4 sm:h-5 sm:w-5" />
         <input
           type="text"
-          placeholder="Search products or shops nearby..."
+          placeholder="Search a product, brand or shop, e.g. rice or pharmacy"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onFocus={() => setShowSuggestions(true)}
@@ -769,7 +788,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                     <p className="text-sm font-bold text-emerald-900">Need “{searchQuery.trim()}” nearby?</p>
                     <p className="mt-1 text-xs text-emerald-800">Send a request so we can find or onboard a nearby shop.</p>
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <input type="tel" value={requestPhone} onChange={(event) => setRequestPhone(event.target.value)} placeholder="Phone number (optional)" className="min-w-0 flex-1 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm" />
+                      <div className="min-w-0 flex-1"><IndianPhoneInput value={requestPhone} onChange={setRequestPhone} label="Contact mobile number" required={false} /></div>
                       <button disabled={submittingRequest} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">{submittingRequest ? 'Sending...' : 'Request product'}</button>
                     </div>
                     {requestMessage && <p className="mt-2 text-xs font-medium text-emerald-800">{requestMessage}</p>}
@@ -839,14 +858,14 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                         {p.description && <p className="mt-1 text-xs text-slate-500 line-clamp-2">{p.description}</p>}
 
                         {/* Shop Name */}
-                        <p className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium truncate">
+                        <button type="button" onClick={() => openShopCatalog(p)} title={`Open ${p.shop_name || 'shop'} catalog`} className="mt-2 flex max-w-full items-center gap-1 truncate text-left text-xs font-semibold text-slate-500 transition hover:text-emerald-700 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
                           <Store className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          {p.shop_name || 'Local Shop'}
-                        </p>
+                          <span className="truncate">{p.shop_name || 'Local Shop'}</span>
+                        </button>
                       </div>
 
                       <div className="mt-4 flex gap-2">
-                        <button onClick={() => setSelectedProduct(p)} className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">View details</button>
+                        <button onClick={() => { saveActivity('product_view', p.shop_id, p.id); setSelectedProduct(p); }} className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">View details</button>
                         <button onClick={() => toggleFavorite(p)} aria-label="Toggle favorite" className={`rounded-lg border px-3 py-2 ${favorites.some((item) => item.id === p.id) ? 'border-rose-200 bg-rose-50 text-rose-600' : 'border-slate-300 bg-white text-slate-500'}`}><Heart className={`h-4 w-4 ${favorites.some((item) => item.id === p.id) ? 'fill-current' : ''}`} /></button>
                         <button onClick={() => shareProduct(p)} aria-label="Share product" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-500"><Share2 className="h-4 w-4" /></button>
                       </div>
@@ -931,7 +950,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                       </div>
 
                       <div className="mt-4 grid grid-cols-2 gap-2">
-                        <button onClick={() => { saveActivity('view', shop.id); onOpenShop?.(shop); }} className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"><Store className="h-3.5 w-3.5" /> View full shop catalog</button>
+                        <button onClick={() => onOpenShop?.(shop)} className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"><Store className="h-3.5 w-3.5" /> View full shop catalog</button>
                         {shop.phone && <button onClick={() => handleCall(shop.phone, shop.id)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
                         {shop.whatsapp_number && <button onClick={() => handleWhatsApp(shop.whatsapp_number, null, shop.name, shop.id)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
                         <button onClick={() => handleGetDirections(shop.lat, shop.lng, shop.name, shop.address, shop.id)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
@@ -960,10 +979,10 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
             <form onSubmit={submitReview} className="hidden">
               <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-bold text-slate-800">How was your experience?</p><p className="text-xs text-slate-500">Your rating helps nearby customers choose.</p></div><select value={reviewTarget} onChange={(event) => { setReviewTarget(event.target.value); setReviewMessage(''); }} className="rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700"><option value="product">Rate product</option><option value="shop">Rate shop</option></select></div>
               <div className="mt-3 flex items-center gap-1">{[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" onClick={() => setReviewRating(value)} aria-label={`${value} star rating`} className={`rounded-lg p-1 transition hover:scale-110 ${value <= reviewRating ? 'text-amber-400' : 'text-slate-300'}`}><Star className="h-7 w-7 fill-current" /></button>)}<span className="ml-2 text-sm font-bold text-amber-800">{reviewRating}/5</span></div>
-              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Tell others what you liked (optional)" className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm outline-none focus:border-amber-400" />
+              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Share product quality, price or service details (optional)" className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm outline-none focus:border-amber-400" />
               <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-slate-500">{reviewMessage}</span><button disabled={savingReview} className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-amber-950 disabled:opacity-60">{savingReview ? 'Saving…' : 'Submit review'}</button></div>
             </form>
-            <div className="mt-5 rounded-xl bg-slate-50 p-3"><p className="font-bold text-slate-800">{selectedProduct.shop_name}</p><p className="mt-1 text-sm text-slate-500">{selectedProduct.shop_address}</p></div>
+            <div className="mt-5 rounded-xl bg-slate-50 p-3"><button type="button" onClick={() => openShopCatalog(selectedProduct)} className="inline-flex items-center gap-1 font-bold text-slate-800 transition hover:text-emerald-700 hover:underline"><Store className="h-4 w-4" />{selectedProduct.shop_name || 'Local Shop'}</button><p className="mt-1 text-sm text-slate-500">{selectedProduct.shop_address}</p></div>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {selectedProduct.shop_phone && <button onClick={() => handleCall(selectedProduct.shop_phone, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-slate-300 py-2.5 text-sm font-semibold text-slate-700"><Phone className="mr-1 inline h-4 w-4" />Call</button>}
               {selectedProduct.shop_whatsapp_number && <button onClick={() => handleWhatsApp(selectedProduct.shop_whatsapp_number, selectedProduct.name, selectedProduct.shop_name, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-700"><MessageCircle className="mr-1 inline h-4 w-4" />WhatsApp</button>}
@@ -983,7 +1002,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
             <form onSubmit={submitReview} className="mt-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-4">
               <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-slate-800">Add your rating</p><select value={reviewTarget} onChange={(event) => { const target = event.target.value; setReviewTarget(target); setReviewMessage(''); loadReviews(target, reviewItem); }} className="rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700"><option value="product" disabled={!reviewItem.shop_id}>Product</option><option value="shop">Shop</option></select></div>
               <div className="mt-3 flex items-center gap-1">{[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" onClick={() => setReviewRating(value)} aria-label={`${value} star rating`} className={`rounded-lg p-1 transition hover:scale-110 ${value <= reviewRating ? 'text-amber-400' : 'text-slate-300'}`}><Star className="h-7 w-7 fill-current" /></button>)}<span className="ml-2 text-sm font-bold text-amber-800">{reviewRating}/5</span></div>
-              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Tell others what you liked (optional)" className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm outline-none focus:border-amber-400" />
+              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={500} placeholder="Share product quality, price or service details (optional)" className="mt-3 min-h-20 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm outline-none focus:border-amber-400" />
               <div className="mt-3 flex items-center justify-between gap-2"><span className="text-xs font-medium text-emerald-700">{reviewMessage}</span><button disabled={savingReview} className="rounded-xl bg-amber-400 px-4 py-2 text-xs font-bold text-amber-950 disabled:opacity-60">{savingReview ? 'Saving...' : 'Publish review'}</button></div>
             </form>
             <div className="mt-5"><h3 className="text-sm font-bold text-slate-800">Recent reviews</h3>{existingReviews.length ? <div className="mt-3 space-y-3">{existingReviews.map((review) => <article key={review.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-center justify-between"><p className="text-sm font-semibold text-slate-700">{review.owner_name || 'Nearbuy customer'}</p><span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />{review.rating}/5</span></div>{review.comment && <p className="mt-2 text-sm leading-5 text-slate-600">{review.comment}</p>}<p className="mt-2 text-[11px] text-slate-400">{new Date(review.created_at).toLocaleDateString()}</p></article>)}</div> : <p className="mt-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No reviews yet. Be the first to share your experience.</p>}</div>
