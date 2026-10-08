@@ -154,7 +154,7 @@ const offerShopAccess = async (offerId, userId) => (await pool.query(
 const requireActiveSubscription = (res, shop) => {
   if (!shop) { res.status(404).json({ error: 'Shop or item not found, or you do not own it.' }); return false; }
   if (!shop.subscription_active) {
-    res.status(403).json({ error: 'Your shop subscription has expired. Renew the plan to manage products and offers.' });
+    res.status(403).json({ error: 'Your shop subscription has expired. Renew the plan to access the shop dashboard.' });
     return false;
   }
   return true;
@@ -280,8 +280,9 @@ app.post('/api/auth/register-shop', async (req, res) => {
     const shopWhatsApp = indianContactPhone(whatsapp_number);
     const cleanEmail = String(email || '').trim().toLowerCase() || null;
     if (!/^\+91[6-9]\d{9}$/.test(cleanPhone)) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number.' });
-    if (!shopPhone) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number.' });
+    if (shopPhone === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number or leave it blank.' });
     if (shopWhatsApp === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number or leave it blank.' });
+    if (!shopPhone && !shopWhatsApp) return res.status(400).json({ error: 'Add at least one customer contact number: Call or WhatsApp.' });
     if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
     const parsedLatitude = Number(latitude);
     const parsedLongitude = Number(longitude);
@@ -621,7 +622,8 @@ app.get('/api/shops/:shopId/notifications', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
   if (!Number.isInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view notifications for your own shop.' });
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query(`SELECT id,notification_type,title,message,read_at,created_at FROM shop_notifications WHERE shop_id=$1 ORDER BY created_at DESC LIMIT 20`, [shopId]);
     return res.json({ notifications: result.rows, unread_count: result.rows.filter((item) => !item.read_at).length });
   } catch (error) {
@@ -634,7 +636,8 @@ app.patch('/api/shops/:shopId/notifications/read', authenticate, async (req, res
   const shopId = Number(req.params.shopId);
   if (!Number.isInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only update notifications for your own shop.' });
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     await pool.query('UPDATE shop_notifications SET read_at=CURRENT_TIMESTAMP WHERE shop_id=$1 AND read_at IS NULL', [shopId]);
     return res.json({ message: 'Notifications marked as read.' });
   } catch (error) {
@@ -738,6 +741,7 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
   if (shopPhone === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number or leave it blank.' });
   if (shopWhatsApp === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number or leave it blank.' });
+  if (!shopPhone && !shopWhatsApp) return res.status(400).json({ error: 'Add at least one customer contact number: Call or WhatsApp.' });
 
   if (!shopId || !name?.trim() || !category) {
     return res.status(400).json({ error: 'Shop name and category are required.' });
@@ -752,9 +756,8 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   }
 
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) {
-      return res.status(403).json({ error: 'You can only update your own shop.' });
-    }
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
 
     const result = await pool.query(
       `UPDATE shops
@@ -762,8 +765,8 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
            address = COALESCE($3, address),
            latitude = COALESCE($4, latitude), longitude = COALESCE($5, longitude),
            google_map_link = $6,
-           phone = COALESCE($7, phone),
-           whatsapp_number = COALESCE($8, whatsapp_number),
+           phone = $7,
+           whatsapp_number = $8,
            opening_hours = COALESCE($9, opening_hours),
            opening_time = $10,
            closing_time = $11,
@@ -808,9 +811,8 @@ app.patch('/api/shops/:shopId/open-status', authenticate, async (req, res) => {
   }
 
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) {
-      return res.status(403).json({ error: 'You can only update your own shop status.' });
-    }
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query(
       `UPDATE shops
        SET is_open = $1, open_status_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
@@ -960,7 +962,8 @@ app.get('/api/shops/:shopId/offers', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId);
   if (!shopId) return res.status(400).json({ error: 'A valid shop is required.' });
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only manage offers for your own shop.' });
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const result = await pool.query('SELECT * FROM shop_offers WHERE shop_id = $1 ORDER BY created_at DESC', [shopId]);
     return res.json({ offers: result.rows });
   } catch (err) { return res.status(500).json({ error: 'Unable to load shop offers.' }); }
@@ -1139,7 +1142,8 @@ app.get('/api/shops/:shopId/insights', authenticate, async (req, res) => {
   if (!shopId) return res.status(400).json({ error: 'A valid shop is required.' });
   if (!['monthly', 'total'].includes(period)) return res.status(400).json({ error: 'Insights period must be monthly or total.' });
   try {
-    if (!(await isShopOwner(shopId, req.user.userId))) return res.status(403).json({ error: 'You can only view insights for your own shop.' });
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
     const periodFilter = period === 'monthly' ? "AND created_at >= DATE_TRUNC('month', CURRENT_TIMESTAMP)" : '';
     const [result, latestReviews] = await Promise.all([pool.query(
       `SELECT
@@ -1203,8 +1207,8 @@ app.get('/api/search/products', async (req, res) => {
     return res.status(400).json({ error: 'Availability filter must be all or available.' });
   }
 
-  // “All distances” in the UI is intentionally broad but bounded at 1200 km.
-  const radiusKm = requestedRadius === null ? 1200 : Math.min(requestedRadius, 1200);
+  // “Global” searches are intentionally broad but bounded to the requested 5,000 km range.
+  const radiusKm = requestedRadius === null ? 5000 : Math.min(requestedRadius, 5000);
   const searchTerm = `%${String(query).trim()}%`;
 
   try {
@@ -1305,7 +1309,7 @@ app.get('/api/search/suggestions', async (req, res) => {
         ORDER BY distance_km ASC, name ASC
         LIMIT 8;
       `,
-      [latitude, longitude, `%${term}%`, requestedRadius === null ? 1200 : Math.min(Math.max(requestedRadius, 1), 1200)]
+      [latitude, longitude, `%${term}%`, requestedRadius === null ? 5000 : Math.min(Math.max(requestedRadius, 1), 5000)]
     );
     return res.json({ suggestions: result.rows });
   } catch (err) {
@@ -1355,9 +1359,9 @@ app.get('/api/shops/:shopId/product-requests', authenticate, async (req, res) =>
   const shopId = Number(req.params.shopId);
   if (!Number.isSafeInteger(shopId) || shopId < 1) return res.status(400).json({ error: 'A valid shop is required.' });
   try {
-    const shop = await pool.query('SELECT id, latitude, longitude FROM shops WHERE id = $1 AND user_id = $2', [shopId, req.user.userId]);
-    if (!shop.rows.length) return res.status(403).json({ error: 'You can only view demand near your own shop.' });
-    const { latitude, longitude } = shop.rows[0];
+    const shop = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, shop)) return;
+    const { latitude, longitude } = shop;
     const requests = await pool.query(
       `WITH nearby AS (
          SELECT id, requested_product, radius_km, status, created_at,

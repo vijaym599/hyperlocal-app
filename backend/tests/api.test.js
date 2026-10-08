@@ -38,6 +38,7 @@ const pool = {
     if (sql.includes('subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active') && sql.includes('FROM shops')) return { rows: [{ id: 1, subscription_plan: 'pro', subscription_active: shopSubscriptionActive }] };
     if (sql.includes('SELECT subscription_plan')) return { rows: [{ subscription_plan: 'pro' }] };
     if (sql.includes('UPDATE products p')) return { rows: [{ id: 1, name: values[0], description: values[1], brand: values[2], price: values[3] }] };
+    if (sql.startsWith('UPDATE shops') && sql.includes('whatsapp_number = $8')) return { rows: [{ id: 1, name: values[0], category: values[1], phone: values[6], whatsapp_number: values[7] }] };
     if (sql.includes('SELECT s.id, s.name, s.category')) return { rows: [{ id: 1, name: 'Test shop' }] };
     if (sql.includes('COUNT(*)')) return { rows: [{ count: 0 }] };
     if (sql.includes('SELECT id FROM shops')) return { rows: [{ id: 1 }] };
@@ -76,8 +77,10 @@ const post = (path, body, authenticated = false) => fetch(base + path, {
 });
 
 test('discovery returns ten products per page and exposes subsequent pages', async () => {
-  const first = await (await fetch(base + '/api/search/products?lat=13&lng=80')).json();
+  const firstResponse = await fetch(base + '/api/search/products?lat=13&lng=80');
+  const first = await firstResponse.json();
   assert.equal(first.results.length, 10);
+  assert.equal(first.radius_km, 5000);
   assert.equal(first.results[0].id, 1);
   assert.equal(first.next_page, 2);
   assert.equal(first.has_more, true);
@@ -92,6 +95,7 @@ test('discovery returns ten products per page and exposes subsequent pages', asy
   const sql = calls.findLast(call => call.sql.includes('WITH ranked_products')).sql;
   assert.match(sql, /CASE WHEN subscription_active THEN 0 ELSE 1 END/);
   assert.match(sql, /ELSE 'out_of_stock' END AS availability_status/);
+  assert.equal(calls.find(call => call.sql.includes('WITH ranked_products')).values[3], 5000);
 });
 
 test('shop directory is public, paginated, and independent of SEO configuration', async () => {
@@ -244,9 +248,33 @@ test('product create and edit reject blank, malformed and oversized prices', asy
   assert.deepEqual(calls.findLast(call => call.sql.includes('UPDATE products p')).values.slice(8), [false, false]);
 });
 
-test('expired shop subscriptions block catalog and offer mutations', async () => {
+test('shop contact requires call or WhatsApp and allows either number to be cleared', async () => {
+  const updateShop = body => fetch(base + '/api/shops/1', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` },
+    body: JSON.stringify({ name: 'Test shop', category: 'Grocery & Supermarket', ...body }),
+  });
+  const missing = await updateShop({ phone: '', whatsapp_number: '' });
+  assert.equal(missing.status, 400);
+  assert.match((await missing.json()).error, /at least one customer contact/i);
+
+  const whatsappOnly = await updateShop({ phone: '', whatsapp_number: '9876543210' });
+  assert.equal(whatsappOnly.status, 200);
+  const whatsappUpdate = calls.findLast(call => call.sql.startsWith('UPDATE shops'));
+  assert.equal(whatsappUpdate.values[6], null);
+  assert.equal(whatsappUpdate.values[7], '+919876543210');
+
+  const callOnly = await updateShop({ phone: '9123456789', whatsapp_number: '' });
+  assert.equal(callOnly.status, 200);
+  const callUpdate = calls.findLast(call => call.sql.startsWith('UPDATE shops'));
+  assert.equal(callUpdate.values[6], '+919123456789');
+  assert.equal(callUpdate.values[7], null);
+});
+
+test('expired shop subscriptions allow billing only and block owner dashboard APIs', async () => {
   shopSubscriptionActive = false;
   try {
+    const authHeaders = { Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` };
     const updateProduct = await fetch(base + '/api/products/1', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` }, body: JSON.stringify({ name: 'Rice', price: 10 }) });
     assert.equal(updateProduct.status, 403);
     assert.match((await updateProduct.json()).error, /subscription has expired/i);
@@ -254,6 +282,18 @@ test('expired shop subscriptions block catalog and offer mutations', async () =>
     assert.equal(addProduct.status, 403);
     const offer = await post('/api/shops/1/offers', { title: 'Sale' }, true);
     assert.equal(offer.status, 403);
+    const updateShop = await fetch(base + '/api/shops/1', { method: 'PUT', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Test shop', category: 'Grocery & Supermarket', phone: '9876543210' }) });
+    assert.equal(updateShop.status, 403);
+    const updateStatus = await fetch(base + '/api/shops/1/open-status', { method: 'PATCH', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ is_open: true }) });
+    assert.equal(updateStatus.status, 403);
+    for (const path of ['/api/shops/1/offers', '/api/shops/1/insights', '/api/shops/1/product-requests', '/api/shops/1/notifications']) {
+      const response = await fetch(base + path, { headers: authHeaders });
+      assert.equal(response.status, 403, `${path} should be subscription protected`);
+    }
+    const markNotifications = await fetch(base + '/api/shops/1/notifications/read', { method: 'PATCH', headers: authHeaders });
+    assert.equal(markNotifications.status, 403);
+    const billingQueue = await fetch(base + '/api/shops/1/subscription-queue', { headers: authHeaders });
+    assert.equal(billingQueue.status, 200, 'billing must remain available for renewal');
   } finally { shopSubscriptionActive = true; }
 });
 

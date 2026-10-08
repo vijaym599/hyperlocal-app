@@ -181,7 +181,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const [initialCache] = useState(() => readDiscoveryCache(localStorage, API_BASE_URL));
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
-  const [radiusKm, setRadiusKm] = useState('');
+  const [radiusKm, setRadiusKm] = useState('20');
   const [availableOnly, setAvailableOnly] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -644,7 +644,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
               <LocateFixed className="h-4 w-4 text-emerald-300" />
               <span className="sr-only">Search distance</span>
               <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="cursor-pointer bg-transparent pr-1 text-xs font-bold text-white outline-none [&>option]:text-slate-900">
-                <option value="">Global</option>
+                <option value="">Global (5000 km)</option>
                 <option value="2">Within 2 km</option>
                 <option value="5">Within 5 km</option>
                 <option value="10">Within 10 km</option>
@@ -657,7 +657,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
             <LocateFixed className="h-4 w-4 shrink-0 text-emerald-300" />
             <span>Distance</span>
             <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="min-w-0 flex-1 cursor-pointer bg-transparent text-right text-xs font-bold text-white outline-none [&>option]:text-slate-900">
-              <option value="">Global</option>
+              <option value="">Global (5000 km)</option>
               <option value="2">Within 2 km</option>
               <option value="5">Within 5 km</option>
               <option value="10">Within 10 km</option>

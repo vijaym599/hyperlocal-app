@@ -189,7 +189,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [newProduct, setNewProduct] = useState({ name: '', brand: '', description: '', price: '', image_url: '', availability_status: 'available' });
   const [editingProduct, setEditingProduct] = useState(null);
   const [editingShop, setEditingShop] = useState(false);
-  const [dashboardSection, setDashboardSection] = useState('overview');
+  const [selectedDashboardSection, setDashboardSection] = useState('overview');
   const [bulkMessage, setBulkMessage] = useState('');
   const [shopForm, setShopForm] = useState({ name: '', category: '', address: '', city: '', phone: '', whatsapp_number: '', image_url: '', opening_hours: '', opening_time: '', closing_time: '', latitude: '', longitude: '', google_map_link: '' });
   const [autoOpen, setAutoOpen] = useState(shopData?.is_open !== false);
@@ -201,6 +201,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const subscriptionEnd = shopData?.subscription_ends_at ? new Date(shopData.subscription_ends_at) : null;
   const subscriptionDaysLeft = subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) ? Math.ceil((subscriptionEnd.getTime() - currentDate.getTime()) / 86400000) : null;
   const subscriptionIsActive = Boolean(subscriptionEnd && !Number.isNaN(subscriptionEnd.getTime()) && subscriptionEnd.getTime() > currentDate.getTime());
+  const dashboardSection = subscriptionIsActive ? selectedDashboardSection : 'billing';
   const subscriptionNeedsAttention = subscriptionDaysLeft == null || subscriptionDaysLeft <= 30 || shopData?.subscription_status === 'cancelled';
   const promotionApplies = (planId) => subscriptionPromotionEligible && subscriptionPromotion?.eligible_plans?.includes(planId) && Number(subscriptionPromotion.purchase_months) === 1;
   const todayIso = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
@@ -251,7 +252,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   }, [shopData?.id, shopData?.opening_time, shopData?.closing_time]);
 
   useEffect(() => {
-    if (dashboardSection !== 'insights' || !shopData?.id || !session?.token) return undefined;
+    if (!subscriptionIsActive || dashboardSection !== 'insights' || !shopData?.id || !session?.token) return undefined;
     let active = true;
     const loadInsights = async (showLoading = false) => {
       if (showLoading) setInsightsLoading(true);
@@ -270,10 +271,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     void loadInsights(true);
     const timer = window.setInterval(() => void loadInsights(false), 30000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [shopData?.id, session?.token, insightsPeriod, dashboardSection]);
+  }, [shopData?.id, session?.token, insightsPeriod, dashboardSection, subscriptionIsActive]);
 
   useEffect(() => {
-    if (dashboardSection !== 'demand' || !shopData?.id || !session?.token) return undefined;
+    if (!subscriptionIsActive || dashboardSection !== 'demand' || !shopData?.id || !session?.token) return undefined;
     let active = true;
     const loadDemand = async (showLoading = false) => {
       if (showLoading) setDemandLoading(true);
@@ -289,7 +290,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     void loadDemand(true);
     const timer = window.setInterval(() => void loadDemand(false), 30000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [dashboardSection, session?.token, shopData?.id]);
+  }, [dashboardSection, session?.token, shopData?.id, subscriptionIsActive]);
 
   const updateSubscription = async (action, plan = null) => {
     if (!shopData?.id) return;
@@ -365,10 +366,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   useEffect(() => {
-    if (shopData?.id) {
+    if (shopData?.id && subscriptionIsActive) {
       void Promise.resolve().then(() => fetchProductsFromBackend(shopData.id));
     }
-  }, [shopData?.id]);
+  }, [shopData?.id, subscriptionIsActive]);
 
   const loadShopOffers = async () => {
     if (!shopData?.id || !session?.token) return;
@@ -376,21 +377,21 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   useEffect(() => {
-    if (dashboardSection !== 'offers' || !shopData?.id || !session?.token) return;
+    if (!subscriptionIsActive || dashboardSection !== 'offers' || !shopData?.id || !session?.token) return;
     void Promise.resolve().then(async () => {
       try { setShopOffers(await fetchShopOffers(shopData.id, session.token)); }
       catch (error) { setOfferMessage(error.message); }
     });
-  }, [shopData?.id, session?.token, dashboardSection]);
+  }, [shopData?.id, session?.token, dashboardSection, subscriptionIsActive]);
 
   useEffect(() => {
-    if (!shopData?.id || !session?.token) return;
+    if (!subscriptionIsActive || !shopData?.id || !session?.token) return;
     const controller = new AbortController();
     fetchShopNotifications(shopData.id, session.token, controller.signal)
       .then(setShopNotifications)
       .catch((error) => { if (error.name !== 'AbortError') setNotificationsError(error.message); });
     return () => controller.abort();
-  }, [shopData?.id, session?.token]);
+  }, [shopData?.id, session?.token, subscriptionIsActive]);
 
   useEffect(() => {
     if (!shopData?.id || !session?.token) return;
@@ -515,7 +516,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const payload = { 
         ...regForm,
         account_phone: indianPhoneE164(regForm.account_phone),
-        phone: indianPhoneE164(regForm.phone),
+        phone: regForm.phone ? indianPhoneE164(regForm.phone) : '',
         whatsapp_number: regForm.whatsapp_number ? indianPhoneE164(regForm.whatsapp_number) : '',
         selected_plan: planId,
         payment_id: paymentId,
@@ -777,6 +778,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const handleUpdateShop = async (e) => {
     e.preventDefault();
     if (!shopData?.id) return;
+    if (!shopForm.phone && !shopForm.whatsapp_number) {
+      alert('Add at least one customer contact number: Call or WhatsApp.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}`, {
@@ -855,7 +860,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     return (
       <div className="mx-3 my-3 max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 font-sans shadow-sm sm:mx-auto sm:my-8 sm:p-8">
         {wizardStep === 1 && (
-          <form onSubmit={(e) => { e.preventDefault(); setErrorMsg(''); setWizardStep(2); }} className="space-y-4">
+          <form onSubmit={(e) => { e.preventDefault(); if (!regForm.phone && !regForm.whatsapp_number) { setErrorMsg('Add at least one customer contact number: Call or WhatsApp.'); return; } setErrorMsg(''); setWizardStep(2); }} className="space-y-4">
             <button type="button" onClick={() => setViewMode('choice')} className="text-xs text-slate-500 hover:text-slate-800 mb-2 flex items-center gap-1 cursor-pointer">
               <ArrowLeft className="w-3 h-3" /> Back
             </button>
@@ -887,8 +892,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             </select>
 
             <textarea required rows="2" placeholder="Full shop address with area and pincode *" value={regForm.address} onChange={(e) => setRegForm({ ...regForm, address: e.target.value })} className="w-full resize-none px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
-            <IndianPhoneInput value={regForm.phone} onChange={(phone) => setRegForm({ ...regForm, phone })} label="Shop call mobile number" />
-            <IndianPhoneInput value={regForm.whatsapp_number} onChange={(whatsapp_number) => setRegForm({ ...regForm, whatsapp_number })} label="Shop WhatsApp mobile number" required={false} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><IndianPhoneInput value={regForm.phone} onChange={(phone) => setRegForm({ ...regForm, phone })} label="Shop call mobile number" required={false} /><IndianPhoneInput value={regForm.whatsapp_number} onChange={(whatsapp_number) => setRegForm({ ...regForm, whatsapp_number })} label="Shop WhatsApp mobile number" required={false} /></div>
+            <p className="text-xs font-medium text-slate-500">Add at least one customer contact number: Call or WhatsApp.</p>
             <input type="text" placeholder="Customer-visible hours, e.g. Mon–Sun, 9 AM–9 PM" value={regForm.opening_hours} onChange={(e) => setRegForm({ ...regForm, opening_hours: e.target.value })} className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm" />
             <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={regForm.opening_time} onChange={(e) => setRegForm({ ...regForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={regForm.closing_time} onChange={(e) => setRegForm({ ...regForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
             
@@ -964,7 +969,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm lg:p-4">
             <div className="hidden border-b border-slate-100 px-2 pb-4 lg:block"><Store className="mb-3 h-7 w-7 text-emerald-700" /><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Shop workspace</p><p className="mt-1 truncate font-bold text-slate-900">{shopData?.name || 'My Shop'}</p></div>
             <nav aria-label="Shop dashboard" className="flex gap-2 overflow-x-auto lg:mt-4 lg:flex-col lg:overflow-visible">
-              {[
+              {(subscriptionIsActive ? [
                 ['overview', 'Overview', LayoutDashboard],
                 ['catalog', 'Products & stock', Package],
                 ['offers', 'Offers', Tag],
@@ -974,11 +979,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 ['notifications', `Notifications${shopNotifications.some((item) => !item.read_at) ? ` (${shopNotifications.filter((item) => !item.read_at).length})` : ''}`, Bell],
                 ['reports', 'Complaints', MessageSquareWarning],
                 ['security', 'Account security', KeyRound],
-              ].map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
+              ] : [['billing', 'Renew subscription', CalendarDays]]).map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
                 'flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition lg:w-full ' + (dashboardSection === id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800')
               }><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></button>)}
             </nav>
-            <div className="mt-5 hidden space-y-2 border-t border-slate-100 pt-4 lg:block"><button type="button" onClick={openShopEditor} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Pencil className="h-4 w-4" />Edit shop details</button>{typeof onLogout === 'function' && <button type="button" onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-rose-600 hover:bg-rose-50"><LogOut className="h-4 w-4" />Sign out</button>}</div>
+            <div className="mt-5 hidden space-y-2 border-t border-slate-100 pt-4 lg:block">{subscriptionIsActive && <button type="button" onClick={openShopEditor} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Pencil className="h-4 w-4" />Edit shop details</button>}{typeof onLogout === 'function' && <button type="button" onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-rose-600 hover:bg-rose-50"><LogOut className="h-4 w-4" />Sign out</button>}</div>
           </div>
         </aside>
         <div className="min-w-0">
@@ -1007,12 +1012,12 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {shopData?.subscription_plan !== 'enterprise' && <button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">Upgrade plan</button>}
-          <span className={`rounded-xl px-3 py-2 text-xs font-bold ${autoOpen ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>{autoOpen ? 'Auto: Open now' : 'Auto: Closed'}</span>
-          <button onClick={openShopEditor} className="lg:hidden p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
+          {(!subscriptionIsActive || shopData?.subscription_plan !== 'enterprise') && <button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">{subscriptionIsActive ? 'Upgrade plan' : 'Renew plan'}</button>}
+          {subscriptionIsActive && <span className={`rounded-xl px-3 py-2 text-xs font-bold ${autoOpen ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>{autoOpen ? 'Auto: Open now' : 'Auto: Closed'}</span>}
+          {subscriptionIsActive && <button onClick={openShopEditor} className="lg:hidden p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-1 text-xs cursor-pointer" title="Edit shop details">
             <Pencil className="w-4 h-4" /><span className="hidden sm:inline">Edit Shop</span>
-          </button>
-          <button 
+          </button>}
+          {subscriptionIsActive && <button
             disabled={fetchingProducts}
             onClick={() => fetchProductsFromBackend(shopData?.id)} 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
@@ -1020,7 +1025,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           >
             <RefreshCw className={`w-4 h-4 ${fetchingProducts ? 'animate-spin text-emerald-400' : ''}`} />
             <span className="hidden sm:inline">Refresh</span>
-          </button>
+          </button>}
           {typeof onLogout === 'function' && (
             <button 
               onClick={onLogout} 
@@ -1037,6 +1042,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       {(dashboardSection === 'overview' || dashboardSection === 'catalog') && <div className={`grid grid-cols-2 gap-3 sm:grid-cols-4 ${dashboardSection === 'overview' ? 'mb-4' : 'mb-5'}`}>
         {[['Listed products', products.length, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { setDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
       </div>}
+      {dashboardSection === 'overview' && shopData?.id && !shopData.phone && !shopData.whatsapp_number && <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><p className="font-bold text-amber-950">Customer contact is missing</p><p className="mt-1 text-sm text-amber-800">Add a Call or WhatsApp number so customers can contact your shop. Your account login number stays private.</p></div></div><button type="button" onClick={openShopEditor} className="rounded-xl bg-amber-700 px-4 py-2 text-xs font-bold text-white">Add contact</button></div></section>}
       {dashboardSection === 'overview' && shopData?.id && <ShopShare shop={shopData} compact />}
 
       {dashboardSection === 'overview' && subscriptionQueue.some((item) => item.status === 'queued') && <section className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><CalendarDays className="h-5 w-5 shrink-0 text-violet-700" /><div><p className="font-bold text-violet-950">{subscriptionQueue.filter((item) => item.status === 'queued').length} purchased plan(s) waiting</p><p className="text-xs text-violet-700">Review and activate them from Billing.</p></div></div><button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl bg-violet-700 px-4 py-2 text-xs font-bold text-white">Open billing</button></div></section>}
@@ -1046,14 +1052,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       {dashboardSection === 'reports' && <div className="mb-5 mt-4"><MyReports session={session} title="Shop complaints" allowCreate /></div>}
 
       {(dashboardSection === 'overview' || dashboardSection === 'billing') && <section className={`mb-5 mt-4 rounded-2xl border p-4 ${subscriptionNeedsAttention ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3">{subscriptionNeedsAttention ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /> : <CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />}<div><p className="font-bold text-slate-900">Current plan: <span className="uppercase">{shopData?.subscription_plan || 'Basic'}</span></p><p className="mt-1 text-sm text-slate-600">{subscriptionEnd ? <>Plan ends on <strong>{subscriptionEnd.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong>{subscriptionDaysLeft <= 0 ? ' · Expired' : ` · ${subscriptionDaysLeft} days remaining`}</> : 'Plan end date is unavailable. Please renew or contact support.'}</p>{Number(shopData?.subscription_bonus_months) > 0 && <p className="mt-1 text-xs font-bold text-violet-800"><Gift className="mr-1 inline h-3.5 w-3.5" />{shopData.subscription_promotion_name || 'Promotional offer'} included {shopData.subscription_bonus_months} free months.</p>}{shopData?.subscription_status === 'cancelled' && <p className="mt-1 text-xs font-bold text-amber-800">Automatic renewal is cancelled.</p>}</div></div><div className="flex gap-2"><button type="button" onClick={() => setDashboardSection('billing')} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">View billing</button><button type="button" disabled={loading} onClick={() => updateSubscription('renew', shopData?.subscription_plan)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Renew plan</button></div></div></section>}
-      {!subscriptionIsActive && (dashboardSection === 'overview' || dashboardSection === 'billing') && <section className="mb-5 rounded-2xl border border-rose-300 bg-rose-50 p-4"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" /><div><p className="font-black text-rose-950">Subscription access paused</p><p className="mt-1 text-sm text-rose-800">All products are now out of stock. Product and offer management is locked until this shop renews a subscription.</p><button type="button" onClick={() => setDashboardSection('billing')} className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white">Renew subscription</button></div></div></section>}
+      {!subscriptionIsActive && dashboardSection === 'billing' && <section className="mb-5 rounded-2xl border border-rose-300 bg-rose-50 p-4"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" /><div><p className="font-black text-rose-950">Dashboard locked</p><p className="mt-1 text-sm text-rose-800">Your subscription has expired. Only subscription purchase and renewal are available; products, offers, customer activity and all other dashboard tools will unlock after renewal.</p></div></div></section>}
 
       {dashboardSection === 'overview' && shopNotifications.some((item) => !item.read_at) && <section className="mb-5 rounded-2xl border border-sky-200 bg-sky-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><Bell className="mt-0.5 h-5 w-5 shrink-0 text-sky-700" /><div><p className="font-bold text-sky-950">{shopNotifications.filter((item) => !item.read_at).length} unread notification(s)</p><p className="mt-1 text-sm text-slate-600">Open Notifications to review admin updates and reminders.</p></div></div><button type="button" onClick={() => setDashboardSection('notifications')} className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700">View notifications</button></div></section>}
 
 
       {dashboardSection === 'billing' && <div className="mb-4 rounded-xl border border-emerald-200 bg-white p-4 text-sm text-slate-600"><p>Basic: <strong>₹120 per month</strong>. Upgrade anytime; keep the same login.</p>{shopData?.subscription_ends_at && <p className="mt-2">Current term ends: <strong>{new Date(shopData.subscription_ends_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</strong></p>}<p className="mt-2 text-xs">Purchases made while a plan is active wait in the activation queue. Activating a queued plan replaces the current remaining term; expired-shop purchases start immediately.</p></div>}
       {dashboardSection === 'billing' && subscriptionPromotion && <div className={`mb-4 rounded-xl border p-4 text-sm font-bold ${subscriptionPromotionEligible ? 'border-violet-200 bg-violet-50 text-violet-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><Gift className="mr-2 inline h-4 w-4" />{subscriptionPromotionEligible ? <>{subscriptionPromotion.name}: pay for {subscriptionPromotion.purchase_months} month and get {subscriptionPromotion.bonus_months} months free on {subscriptionPromotion.eligible_plans.map((plan) => plan.charAt(0).toUpperCase() + plan.slice(1)).join(', ')}. One redemption per shop. Ends {new Date(subscriptionPromotion.ends_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}.</> : <>This shop has already used {subscriptionPromotion.name}. Renewals and plan changes use the regular one-month price unless a new campaign is created.</>}</div>}
-      {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p>{promotionApplies(plan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-[11px] font-black text-violet-800">+ {subscriptionPromotion.bonus_months} free months</p>}<button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
+      {dashboardSection === 'billing' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold text-slate-800">Subscription & billing</h2><p className="mt-1 text-sm text-slate-600">Current plan: <strong className="uppercase">{shopData?.subscription_plan}</strong> · {!subscriptionIsActive ? 'Expired' : shopData?.subscription_status === 'cancelled' ? 'Renewal cancelled' : 'Active'}</p></div>{!subscriptionIsActive ? <button disabled={loading} onClick={() => updateSubscription('renew', shopData?.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Renew current plan</button> : shopData?.subscription_status === 'cancelled' ? <button disabled={loading} onClick={() => updateSubscription('resume', shopData.subscription_plan)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume plan</button> : <button disabled={loading} onClick={() => updateSubscription('cancel')} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700">Cancel renewal</button>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{SUBSCRIPTION_PLANS.map((plan) => <div key={plan.id} className={`rounded-xl border p-3 ${shopData?.subscription_plan === plan.id ? 'border-emerald-500 bg-white' : 'border-emerald-100 bg-white/60'}`}><p className="font-bold text-slate-800">{plan.name} · ₹{plan.price}/mo</p><p className="mt-1 text-xs text-slate-500">{plan.limit >= 9999 ? 'Unlimited' : plan.limit} products · {plan.desc}</p>{promotionApplies(plan.id) && <p className="mt-2 rounded-lg bg-violet-100 p-2 text-[11px] font-black text-violet-800">+ {subscriptionPromotion.bonus_months} free months</p>}<button disabled={loading || shopData?.subscription_plan === plan.id} onClick={() => updateSubscription('change', plan.id)} className="mt-3 text-xs font-bold text-emerald-700 disabled:text-slate-400">{shopData?.subscription_plan === plan.id ? 'Current plan' : `${SUBSCRIPTION_PLANS.findIndex(item => item.id === plan.id) > SUBSCRIPTION_PLANS.findIndex(item => item.id === shopData?.subscription_plan) ? 'Upgrade to' : 'Switch to'} ${plan.name}`}</button></div>)}</div><p className="mt-3 text-[11px] text-slate-500">Demo billing flow: a real payment gateway must be connected before processing live payments.</p></section>}
 
 
       {hasShopInsights && dashboardSection === 'insights' && <section className="mb-6 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm">
@@ -1111,6 +1117,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               <select required value={shopForm.category} onChange={(e) => setShopForm({ ...shopForm, category: e.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><option value="" disabled>Select category</option>{SHOP_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>
               <textarea rows="2" value={shopForm.address} onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })} placeholder="Full shop address with area and pincode" className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><IndianPhoneInput value={shopForm.phone} onChange={(phone) => setShopForm({ ...shopForm, phone })} label="Shop call mobile number" required={false} /><IndianPhoneInput value={shopForm.whatsapp_number} onChange={(whatsapp_number) => setShopForm({ ...shopForm, whatsapp_number })} label="Shop WhatsApp mobile number" required={false} /></div>
+              <p className="text-xs font-medium text-slate-500">At least one is required. Your account login number is never shown automatically.</p>
               <input type="text" value={shopForm.opening_hours} onChange={(e) => setShopForm({ ...shopForm, opening_hours: e.target.value })} placeholder="Customer-visible hours, e.g. Mon–Sun, 9 AM–9 PM" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <div className="grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">Open time<input type="time" value={shopForm.opening_time} onChange={(e) => setShopForm({ ...shopForm, opening_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label><label className="text-xs font-semibold text-slate-600">Close time<input type="time" value={shopForm.closing_time} onChange={(e) => setShopForm({ ...shopForm, closing_time: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label></div>
               <div className="grid grid-cols-2 gap-3"><input type="number" step="any" value={shopForm.latitude} onChange={(e) => setShopForm({ ...shopForm, latitude: e.target.value })} placeholder="Shop latitude, e.g. 13.0827" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><input type="number" step="any" value={shopForm.longitude} onChange={(e) => setShopForm({ ...shopForm, longitude: e.target.value })} placeholder="Shop longitude, e.g. 80.2707" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></div>
