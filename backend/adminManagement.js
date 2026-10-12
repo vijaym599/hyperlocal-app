@@ -1,6 +1,13 @@
 const cleanSearch = (value) => String(value || '').trim().slice(0, 80);
 const { getPromotion, validatePromotion, serializePromotion } = require('./subscriptionPromotions');
 
+const safeHttpUrl = (value) => {
+  try {
+    const url = new URL(String(value || ''));
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+};
+
 function pagination(query) {
   const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
   const limit = Math.min(50, Math.max(10, Number.parseInt(query.limit, 10) || 20));
@@ -70,7 +77,7 @@ function mountAdminManagement(app, pool, authenticate) {
             OR ($4='missing' AND s.subscription_ends_at IS NULL))
         ORDER BY s.subscription_ends_at ASC NULLS FIRST,s.is_verified ASC,s.updated_at DESC,s.id DESC LIMIT $5 OFFSET $6`, [q, verification, operation, subscription, limit, offset]);
       const total = result.rows[0]?.total_count || 0;
-      return res.json({ shops: result.rows.map(({ total_count, ...shop }) => shop), pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+      return res.json({ shops: result.rows.map(({ total_count, ...shop }) => ({ ...shop, google_map_link: safeHttpUrl(shop.google_map_link) })), pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
     } catch (error) {
       console.error('Admin shops failed:', error.message);
       return res.status(500).json({ error: 'Unable to load shops.' });

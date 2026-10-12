@@ -79,7 +79,7 @@ Create `nearbuy_restore_check` separately first. These are instructions only; no
 
 - Domain/DNS, HTTPS host and production database credentials are required to publish.
 - Payment integration needs a gateway decision and credentials plus server-side verification, webhook handling and subscription expiry. Current billing is a local demo. Production now returns HTTP 503 for **new shop registration and all subscription changes**; existing shop/catalog and customer flows remain available. Do not advertise paid onboarding until this is implemented. A free pilot needs an explicit free-plan flow first.
-- Password recovery and phone verification require an agreed email/SMS provider and account verification design. They are not implemented by these deployment changes.
+- Password recovery and phone verification require a configured Twilio Verify account in production. The implemented flows use purpose-bound, expiring, one-time SMS claims.
 - Supply real support/legal business details, confirm initial catalog records and admin access, configure host logging/uptime alerts and scheduled backups, then perform the live browser checks above.
 
 No hosting account, domain, payment gateway or external service was created or published by these changes.

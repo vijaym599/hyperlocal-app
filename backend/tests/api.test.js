@@ -40,10 +40,15 @@ const pool = {
     if (sql.includes('UPDATE products p')) return { rows: [{ id: 1, name: values[0], description: values[1], brand: values[2], price: values[3] }] };
     if (sql.startsWith('UPDATE shops') && sql.includes('whatsapp_number = $8')) return { rows: [{ id: 1, name: values[0], category: values[1], phone: values[6], whatsapp_number: values[7] }] };
     if (sql.includes('SELECT s.id, s.name, s.category')) return { rows: [{ id: 1, name: 'Test shop' }] };
+    if (sql.includes('COUNT(*) OVER()::int AS total_count') && sql.includes('FROM products p JOIN shops s')) {
+      const products = Array.from({ length: 30 }, (_, index) => ({ id: index + 1, name: `Catalog product ${index + 1}`, total_count: 30, available_count: 20, low_stock_count: 6, out_of_stock_count: 4 }));
+      return { rows: products.slice(values[2], values[2] + values[1]) };
+    }
     if (sql.includes('COUNT(*)')) return { rows: [{ count: 0 }] };
     if (sql.includes('SELECT id FROM shops')) return { rows: [{ id: 1 }] };
     return { rows: [] };
   },
+  connect: async () => ({ query: (...args) => pool.query(...args), release: () => {} }),
   initDb: async () => {},
   end: async () => {},
 };
@@ -131,6 +136,11 @@ test('login issues a session using only a valid phone number and password', asyn
   assert.equal(jwt.verify(session.token, process.env.JWT_SECRET).userId, loginUser.id);
   assert.equal(session.user.user_type, 'customer');
   assert.equal(session.requires_otp, undefined);
+});
+
+test('authentication responses are never cacheable', async () => {
+  const response = await post('/api/auth/login', { phone: loginUser.phone, password: 'WrongPassword1' });
+  assert.match(response.headers.get('cache-control') || '', /no-store/);
 });
 
 test('production cannot grant paid accounts or billing changes using client payment references', async () => {
@@ -232,6 +242,15 @@ test('bulk import rejects blank prices but accepts a real zero price', async () 
   assert.equal((await post('/api/shops/1/products/bulk', { products: [{ name: 'Rice', price: 0 }] }, true)).status, 201);
 });
 
+test('product creates lock the owned shop before enforcing plan limits', async () => {
+  calls.length = 0;
+  assert.equal((await post('/api/shops/1/products', { name: 'Rice', price: 10 }, true)).status, 201);
+  const lock = calls.find((call) => call.sql.includes('FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE'));
+  assert.ok(lock, 'the shop row must be locked before counting products');
+  assert.ok(calls.find((call) => call.sql === 'BEGIN'));
+  assert.ok(calls.find((call) => call.sql === 'COMMIT'));
+});
+
 test('product create and edit reject blank, malformed and oversized prices', async () => {
   const update = body => fetch(base + '/api/products/1', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` }, body: JSON.stringify(body) });
   for (const price of ['', ' ', null, undefined, true, [], 100000000, -1]) {
@@ -246,6 +265,9 @@ test('product create and edit reject blank, malformed and oversized prices', asy
   assert.deepEqual(clear.values.slice(8), [true, true]);
   assert.equal((await update({ name: 'Rice', price: '12.50' })).status, 200);
   assert.deepEqual(calls.findLast(call => call.sql.includes('UPDATE products p')).values.slice(8), [false, false]);
+  assert.equal((await update({ name: 'Rice', price: 10, description: 'x'.repeat(2001) })).status, 400);
+  assert.equal((await update({ name: 'Rice', price: 10, image_url: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await update({ name: 'Rice', price: 10, image_url: 'data:text/html;base64,PHNjcmlwdD4=' })).status, 400);
 });
 
 test('shop contact requires call or WhatsApp and allows either number to be cleared', async () => {
@@ -269,6 +291,20 @@ test('shop contact requires call or WhatsApp and allows either number to be clea
   const callUpdate = calls.findLast(call => call.sql.startsWith('UPDATE shops'));
   assert.equal(callUpdate.values[6], '+919123456789');
   assert.equal(callUpdate.values[7], null);
+});
+
+test('shop updates reject unsafe or credential-bearing map links', async () => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` };
+  const update = (google_map_link) => fetch(base + '/api/shops/1', {
+    method: 'PUT', headers, body: JSON.stringify({ name: 'Test shop', category: 'Grocery & Supermarket', phone: '9876543210', google_map_link })
+  });
+  assert.equal((await update('javascript:alert(1)')).status, 400);
+  assert.equal((await update('https://user:password@example.com/map')).status, 400);
+  assert.equal((await update('https://maps.google.com/?q=Chennai')).status, 200);
+  const invalidDetails = await fetch(base + '/api/shops/1', {
+    method: 'PUT', headers, body: JSON.stringify({ name: 'Test shop', category: 'Grocery & Supermarket', phone: '9876543210', latitude: 91, opening_time: '29:99' })
+  });
+  assert.equal(invalidDetails.status, 400);
 });
 
 test('expired shop subscriptions allow billing only and block owner dashboard APIs', async () => {
@@ -299,10 +335,42 @@ test('expired shop subscriptions allow billing only and block owner dashboard AP
 
 test('public portfolio rejects invalid ids and selects no billing fields', async () => {
   for (const id of ['abc', '-1', '1.5', '2147483648']) assert.equal((await fetch(base + `/api/shops/${id}/portfolio`)).status, 400);
+  assert.equal((await fetch(base + '/api/shops/1/portfolio?limit=25')).status, 400);
   const response = await fetch(base + '/api/shops/1/portfolio');
   assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.products.length, 24);
+  assert.deepEqual(body.pagination, { total: 30, page: 1, page_size: 24, has_more: true, next_page: 2 });
+  assert.equal(Object.hasOwn(body.products[0], 'total_count'), false);
   const sql = calls.findLast(call => call.sql.includes('FROM shops s WHERE s.id')).sql;
   assert.doesNotMatch(sql, /s\.\*|payment_id|user_id|subscription/);
+});
+
+test('shop products use bounded pagination and retain aggregate inventory counts', async () => {
+  assert.equal((await fetch(base + '/api/shops/1/products?page=0')).status, 400);
+  assert.equal((await fetch(base + '/api/shops/1/products?limit=25')).status, 400);
+  const response = await fetch(base + '/api/shops/1/products?page=2&limit=10');
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.products.length, 10);
+  assert.equal(body.products[0].id, 11);
+  assert.equal(body.total, 30);
+  assert.equal(body.next_page, 3);
+  assert.deepEqual(body.stock_counts, { available: 20, low_stock: 6, out_of_stock: 4 });
+  assert.equal(Object.hasOwn(body.products[0], 'available_count'), false);
+  const catalogQuery = calls.findLast(call => call.sql.includes('FROM products p JOIN shops s'));
+  assert.deepEqual(catalogQuery.values, [1, 11, 10]);
+  assert.match(catalogQuery.sql, /CASE WHEN s\.subscription_ends_at > CURRENT_TIMESTAMP THEN p\.availability_status ELSE 'out_of_stock'/);
+});
+
+test('expensive anonymous catalog routes are rate limited', async () => {
+  let limited;
+  for (let attempt = 0; attempt < 121 && !limited; attempt += 1) {
+    const response = await fetch(base + '/api/explore');
+    if (response.status === 429) limited = response;
+  }
+  assert.equal(limited?.status, 429);
+  assert.ok(Number(limited.headers.get('retry-after')) >= 1);
 });
 
 test('startup waits for initialization before scheduling or listening', async () => {

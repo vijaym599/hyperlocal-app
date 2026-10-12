@@ -3,7 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
-const { refreshShopStatus, refreshSubscriptionEntitlements } = require('./shopSchedule');
+const { refreshShopStatus } = require('./shopSchedule');
 const { categorySql, categoryIds } = require('./searchCategory');
 const { geocode, searchPlaces } = require('./geocoder');
 const { withAccountValidation } = require('./middleware/auth');
@@ -95,9 +95,28 @@ const indianContactPhone = (value) => {
   const phone = normalizePhone(value);
   return /^\+91[6-9]\d{9}$/.test(phone) ? phone : undefined;
 };
-const hasOversizedImagePayload = (value) => typeof value === 'string' && value.startsWith('data:image/') && value.length > 1_700_000;
+const externalHttpUrl = (value) => {
+  if (value == null || String(value).trim() === '') return null;
+  if (typeof value !== 'string' || value.length > 2048) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+};
+const validImageValue = (value) => {
+  if (value == null || value === '') return true;
+  if (typeof value !== 'string') return false;
+  if (value.startsWith('data:')) return /^data:image\/(?:png|jpe?g|webp);base64,/i.test(value) && value.length <= 1_700_000;
+  return value.length <= 2048 && externalHttpUrl(value) !== undefined;
+};
+const optionalText = (value, max) => value == null || (typeof value === 'string' && value.length <= max);
+const validTime = (value) => value == null || value === '' || (typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value));
 const validProductPrice = value => ['string', 'number'].includes(typeof value) && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 99999999.99;
-const validProductText = body => typeof body.name === 'string' && body.name.trim().length > 0 && body.name.length <= 255 && ['description', 'brand', 'image_url'].every(key => body[key] == null || typeof body[key] === 'string') && (body.brand == null || body.brand.length <= 100);
+const validProductText = body => typeof body.name === 'string' && body.name.trim().length > 0 && body.name.length <= 255
+  && optionalText(body.description, 2000) && optionalText(body.brand, 100) && validImageValue(body.image_url);
 const isValidOfferDate = (value) => {
   if (!value) return true;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -265,8 +284,12 @@ app.post('/api/auth/register-shop', async (req, res) => {
       payment_id 
     } = req.body;
 
-    if (!account_phone || !password || !shop_name) {
+    if (!account_phone || !password || typeof shop_name !== 'string' || !shop_name.trim()) {
       return res.status(400).json({ error: 'Account phone number, password, and shop name are required.' });
+    }
+    if (shop_name.length > 255 || !optionalText(owner_name, 255) || !optionalText(category, 100) || !optionalText(address, 2000)
+      || !optionalText(opening_hours, 500) || !validTime(opening_time) || !validTime(closing_time)) {
+      return res.status(400).json({ error: 'One or more shop details are invalid or too long.' });
     }
     if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
     if (!Object.hasOwn(SUBSCRIPTION_LIMITS, selected_plan) || !payment_id) {
@@ -278,15 +301,18 @@ app.post('/api/auth/register-shop', async (req, res) => {
     const cleanPhone = normalizePhone(account_phone);
     const shopPhone = indianContactPhone(phone);
     const shopWhatsApp = indianContactPhone(whatsapp_number);
+    const mapLink = externalHttpUrl(google_map_link);
     const cleanEmail = String(email || '').trim().toLowerCase() || null;
     if (!/^\+91[6-9]\d{9}$/.test(cleanPhone)) return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number.' });
     if (shopPhone === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number or leave it blank.' });
     if (shopWhatsApp === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number or leave it blank.' });
     if (!shopPhone && !shopWhatsApp) return res.status(400).json({ error: 'Add at least one customer contact number: Call or WhatsApp.' });
-    if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
+    if (mapLink === undefined) return res.status(400).json({ error: 'Enter a valid HTTP(S) Google Maps link or leave it blank.' });
+    if (!isValidEmail(cleanEmail) || (cleanEmail && cleanEmail.length > 255)) return res.status(400).json({ error: 'Enter a valid email address or leave it blank.' });
     const parsedLatitude = Number(latitude);
     const parsedLongitude = Number(longitude);
-    if (latitude === '' || longitude === '' || !Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude)) {
+    if (latitude == null || longitude == null || latitude === '' || longitude === '' || !Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude)
+      || Math.abs(parsedLatitude) > 90 || Math.abs(parsedLongitude) > 180) {
       return res.status(400).json({ error: 'A valid shop latitude and longitude are required.' });
     }
 
@@ -327,7 +353,7 @@ app.post('/api/auth/register-shop', async (req, res) => {
         address?.trim() || null,
         parsedLatitude,
         parsedLongitude,
-        google_map_link?.trim() || '',
+        mapLink || '',
         shopPhone,
         shopWhatsApp,
         opening_hours?.trim() || null,
@@ -463,7 +489,7 @@ app.post('/api/auth/login', async (req, res) => {
 // ==========================================
 // 3. FETCH PRODUCTS OF A SHOP (PostgreSQL)
 // ==========================================
-app.get('/api/shops/catalogs', async (req, res) => {
+app.get('/api/shops/catalogs', rateLimit(120, 10 * 60 * 1000, 'shop-catalogs'), async (req, res) => {
   const page = Number(req.query.page || 1);
   if (!Number.isSafeInteger(page) || page < 1 || page > 100000) return res.status(400).json({ error: 'Invalid page.' });
   try {
@@ -474,18 +500,37 @@ app.get('/api/shops/catalogs', async (req, res) => {
   } catch { return res.status(500).json({ error: 'Unable to load shop catalogs. Please try again.' }); }
 });
 
-app.get('/api/shops/:shopId/products', async (req, res) => {
-  const shopId = req.params.shopId;
+app.get('/api/shops/:shopId/products', rateLimit(120, 10 * 60 * 1000, 'shop-products'), async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  const page = Number(req.query.page || 1);
+  const pageSize = Number(req.query.limit || 24);
+  if (!Number.isSafeInteger(shopId) || shopId < 1 || shopId > 2147483647 || !Number.isSafeInteger(page) || page < 1 || page > 100000 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 24) {
+    return res.status(400).json({ error: 'A valid shop, page, and limit are required.' });
+  }
 
   try {
     const productsRes = await pool.query(
       `SELECT p.*,
+        CASE WHEN s.subscription_ends_at > CURRENT_TIMESTAMP THEN p.availability_status ELSE 'out_of_stock' END AS availability_status,
         COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
-        (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count
-       FROM products p WHERE p.shop_id = $1 ORDER BY p.id DESC LIMIT 1000`,
-      [shopId]
+        (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count,
+        COUNT(*) OVER()::int AS total_count,
+        COUNT(*) FILTER (WHERE s.subscription_ends_at > CURRENT_TIMESTAMP AND COALESCE(p.availability_status, 'available') = 'available') OVER()::int AS available_count,
+        COUNT(*) FILTER (WHERE s.subscription_ends_at > CURRENT_TIMESTAMP AND p.availability_status = 'low_stock') OVER()::int AS low_stock_count,
+        COUNT(*) FILTER (WHERE s.subscription_ends_at IS NULL OR s.subscription_ends_at <= CURRENT_TIMESTAMP OR p.availability_status = 'out_of_stock') OVER()::int AS out_of_stock_count
+       FROM products p JOIN shops s ON s.id = p.shop_id
+       WHERE p.shop_id = $1 ORDER BY p.id DESC LIMIT $2 OFFSET $3`,
+      [shopId, pageSize + 1, (page - 1) * pageSize]
     );
-    return res.json({ products: productsRes.rows });
+    const counts = productsRes.rows[0] || {};
+    const total = counts.total_count || 0;
+    return res.json({
+      products: productsRes.rows.slice(0, pageSize).map(({ total_count, available_count, low_stock_count, out_of_stock_count, ...product }) => product),
+      total, page, page_size: pageSize,
+      has_more: productsRes.rows.length > pageSize,
+      next_page: productsRes.rows.length > pageSize ? page + 1 : null,
+      stock_counts: { available: counts.available_count || 0, low_stock: counts.low_stock_count || 0, out_of_stock: counts.out_of_stock_count || 0 },
+    });
   } catch (err) {
     console.error('Fetch Products Error:', err);
     return res.status(500).json({ error: 'Failed to fetch products from PostgreSQL.' });
@@ -493,9 +538,13 @@ app.get('/api/shops/:shopId/products', async (req, res) => {
 });
 
 // Public shop portfolio: a complete catalog for one shop, independent of nearby search filters.
-app.get('/api/shops/:shopId/portfolio', async (req, res) => {
+app.get('/api/shops/:shopId/portfolio', rateLimit(120, 10 * 60 * 1000, 'shop-portfolio'), async (req, res) => {
   const shopId = Number(req.params.shopId);
-  if (!Number.isSafeInteger(shopId) || shopId < 1 || shopId > 2147483647) return res.status(400).json({ error: 'A valid shop is required.' });
+  const page = Number(req.query.page || 1);
+  const pageSize = Number(req.query.limit || 24);
+  if (!Number.isSafeInteger(shopId) || shopId < 1 || shopId > 2147483647 || !Number.isSafeInteger(page) || page < 1 || page > 100000 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 24) {
+    return res.status(400).json({ error: 'A valid shop, page, and limit are required.' });
+  }
   try {
     const [shopResult, productsResult] = await Promise.all([
       pool.query(
@@ -507,13 +556,21 @@ app.get('/api/shops/:shopId/portfolio', async (req, res) => {
          FROM shops s WHERE s.id = $1`, [shopId]
       ),
       pool.query(
-        `SELECT p.*, COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
-                (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count
-         FROM products p WHERE p.shop_id = $1 ORDER BY p.name ASC`, [shopId]
+        `SELECT p.*, CASE WHEN s.subscription_ends_at > CURRENT_TIMESTAMP THEN p.availability_status ELSE 'out_of_stock' END AS availability_status,
+                COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
+                (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count,
+                COUNT(*) OVER()::int AS total_count
+         FROM products p JOIN shops s ON s.id = p.shop_id
+         WHERE p.shop_id = $1 ORDER BY p.name ASC,p.id ASC LIMIT $2 OFFSET $3`, [shopId, pageSize + 1, (page - 1) * pageSize]
       )
     ]);
     if (!shopResult.rows.length) return res.status(404).json({ error: 'Shop not found.' });
-    return res.json({ shop: shopResult.rows[0], products: productsResult.rows });
+    const total = productsResult.rows[0]?.total_count || 0;
+    return res.json({
+      shop: shopResult.rows[0],
+      products: productsResult.rows.slice(0, pageSize).map(({ total_count, ...product }) => product),
+      pagination: { total, page, page_size: pageSize, has_more: productsResult.rows.length > pageSize, next_page: productsResult.rows.length > pageSize ? page + 1 : null },
+    });
   } catch (err) {
     console.error('Shop portfolio error:', err);
     return res.status(500).json({ error: 'Unable to load this shop portfolio.' });
@@ -661,24 +718,31 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
   if (availability_status && !AVAILABILITY_STATUSES.has(availability_status)) {
     return res.status(400).json({ error: 'Invalid availability status.' });
   }
-  if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Product image is too large. Please upload an optimized image under 1.2 MB.' });
+  if (!validImageValue(image_url)) return res.status(400).json({ error: 'Product image must be an HTTP(S) URL or an optimized PNG, JPEG, or WebP image under 1.2 MB.' });
 
+  let client;
   try {
-    const shop = await ownedShopAccess(shopId, req.user.userId);
-    if (!requireActiveSubscription(res, shop)) return;
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const shop = (await client.query(
+      `SELECT *,subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
+       FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE`, [shopId, req.user.userId]
+    )).rows[0];
+    if (!requireActiveSubscription(res, shop)) { await client.query('ROLLBACK'); return; }
 
     // Check Limit
-    const countRes = await pool.query('SELECT COUNT(*) FROM products WHERE shop_id = $1', [shopId]);
+    const countRes = await client.query('SELECT COUNT(*) FROM products WHERE shop_id = $1', [shopId]);
     const productCount = parseInt(countRes.rows[0].count);
     const planLimit = SUBSCRIPTION_LIMITS[shop.subscription_plan] || 10;
 
     if (productCount >= planLimit) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: `Limit reached! Your current plan allows only ${planLimit} products.` });
     }
 
     const prodImg = (image_url && image_url.trim() !== '') ? image_url : productFallbackImage(name, brand);
 
-    const newProductRes = await pool.query(
+    const newProductRes = await client.query(
       `INSERT INTO products
         (shop_id, name, description, brand, price, image_url, availability_status)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -693,40 +757,52 @@ app.post('/api/shops/:shopId/products', authenticate, async (req, res) => {
         availability_status || 'available'
       ]
     );
+    await client.query('COMMIT');
 
     return res.status(201).json({ message: 'Product added successfully!', product: newProductRes.rows[0] });
 
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('Add Product Error:', err);
     return res.status(500).json({ error: 'Failed to insert product.' });
-  }
+  } finally { client?.release(); }
 });
 
 app.post('/api/shops/:shopId/products/bulk', authenticate, async (req, res) => {
   const shopId = Number(req.params.shopId); const incoming = Array.isArray(req.body?.products) ? req.body.products : [];
   if (!shopId || !incoming.length || incoming.length > 200) return res.status(400).json({ error: 'Upload between 1 and 200 products.' });
+  let client;
   try {
-    const shop = await ownedShopAccess(shopId, req.user.userId);
-    if (!requireActiveSubscription(res, shop)) return;
-    const existingCount = Number((await pool.query('SELECT COUNT(*)::int AS count FROM products WHERE shop_id = $1', [shopId])).rows[0].count);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const shop = (await client.query(
+      `SELECT *,subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
+       FROM shops WHERE id=$1 AND user_id=$2 FOR UPDATE`, [shopId, req.user.userId]
+    )).rows[0];
+    if (!requireActiveSubscription(res, shop)) { await client.query('ROLLBACK'); return; }
+    const existingCount = Number((await client.query('SELECT COUNT(*)::int AS count FROM products WHERE shop_id = $1', [shopId])).rows[0].count);
     const limit = SUBSCRIPTION_LIMITS[shop.subscription_plan] || 10;
-    if (existingCount + incoming.length > limit) return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
+    if (existingCount + incoming.length > limit) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Your plan allows ${limit} products. You can add ${Math.max(0, limit - existingCount)} more.` });
+    }
     const values = incoming.map((item, index) => {
       if (!item || !validProductText(item) || !validProductPrice(item.price)) throw Object.assign(new Error(`Row ${index + 1} needs a product name and valid price.`), { name: 'ProductInputError' });
       const name = item.name.trim(); const price = Number(item.price);
       const status = item.availability_status || 'available'; if (!AVAILABILITY_STATUSES.has(status)) throw Object.assign(new Error(`Row ${index + 1} has an invalid availability status.`), { name: 'ProductInputError' });
-      if (hasOversizedImagePayload(item.image_url)) throw Object.assign(new Error(`Row ${index + 1} has an image that is too large.`), { name: 'ProductInputError' });
       const brand = String(item.brand || '').trim(); const image = String(item.image_url || '').trim() || productFallbackImage(name, brand);
       return [shopId, name, String(item.description || '').trim() || null, brand || null, price, image, status];
     });
     const placeholders = values.map((_, index) => `($${index * 7 + 1}, $${index * 7 + 2}, $${index * 7 + 3}, $${index * 7 + 4}, $${index * 7 + 5}, $${index * 7 + 6}, $${index * 7 + 7})`).join(', ');
-    const result = await pool.query(`INSERT INTO products (shop_id, name, description, brand, price, image_url, availability_status) VALUES ${placeholders} RETURNING *`, values.flat());
+    const result = await client.query(`INSERT INTO products (shop_id, name, description, brand, price, image_url, availability_status) VALUES ${placeholders} RETURNING *`, values.flat());
+    await client.query('COMMIT');
     return res.status(201).json({ message: `${result.rows.length} products added.`, products: result.rows });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     if (err.name === 'ProductInputError') return res.status(400).json({ error: err.message });
     console.error('Bulk product upload failed:', err.message);
     return res.status(500).json({ error: 'Unable to upload products.' });
-  }
+  } finally { client?.release(); }
 });
 
 // ==========================================
@@ -738,19 +814,24 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
   const { city } = req.body;
   const shopPhone = indianContactPhone(phone);
   const shopWhatsApp = indianContactPhone(whatsapp_number);
+  const mapLink = externalHttpUrl(google_map_link);
+  if (typeof name !== 'string' || !name.trim() || name.length > 255 || typeof category !== 'string' || !category.trim() || category.length > 100
+    || !optionalText(address, 2000) || !optionalText(opening_hours, 500) || !validTime(opening_time) || !validTime(closing_time)) {
+    return res.status(400).json({ error: 'One or more shop details are invalid or too long.' });
+  }
   if (city != null && (typeof city !== 'string' || city.trim().length > 80)) return res.status(400).json({ error: 'City must contain at most 80 characters.' });
   if (shopPhone === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit shop call number or leave it blank.' });
   if (shopWhatsApp === undefined) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number or leave it blank.' });
   if (!shopPhone && !shopWhatsApp) return res.status(400).json({ error: 'Add at least one customer contact number: Call or WhatsApp.' });
+  if (mapLink === undefined) return res.status(400).json({ error: 'Enter a valid HTTP(S) Google Maps link or leave it blank.' });
 
-  if (!shopId || !name?.trim() || !category) {
+  if (!shopId) {
     return res.status(400).json({ error: 'Shop name and category are required.' });
   }
-  if (image_url != null && typeof image_url !== 'string') return res.status(400).json({ error: 'Shop image must be a valid image.' });
-  if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Shop image is too large. Please upload an optimized image under 1.2 MB.' });
+  if (!validImageValue(image_url)) return res.status(400).json({ error: 'Shop image must be an HTTP(S) URL or an optimized PNG, JPEG, or WebP image under 1.2 MB.' });
   if (
-    (latitude !== '' && latitude !== undefined && !Number.isFinite(Number(latitude))) ||
-    (longitude !== '' && longitude !== undefined && !Number.isFinite(Number(longitude)))
+    (latitude !== '' && latitude !== undefined && (!Number.isFinite(Number(latitude)) || Math.abs(Number(latitude)) > 90)) ||
+    (longitude !== '' && longitude !== undefined && (!Number.isFinite(Number(longitude)) || Math.abs(Number(longitude)) > 180))
   ) {
     return res.status(400).json({ error: 'Latitude and longitude must be valid numbers.' });
   }
@@ -781,7 +862,7 @@ app.put('/api/shops/:shopId', authenticate, async (req, res) => {
         address?.trim() || null,
         latitude == null || latitude === '' ? null : Number(latitude),
         longitude == null || longitude === '' ? null : Number(longitude),
-        google_map_link?.trim() || '',
+        mapLink || '',
         shopPhone,
         shopWhatsApp,
         opening_hours?.trim() || null,
@@ -865,7 +946,7 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
   if (availability_status && !AVAILABILITY_STATUSES.has(availability_status)) {
     return res.status(400).json({ error: 'Invalid availability status.' });
   }
-  if (hasOversizedImagePayload(image_url)) return res.status(400).json({ error: 'Product image is too large. Please upload an optimized image under 1.2 MB.' });
+  if (!validImageValue(image_url)) return res.status(400).json({ error: 'Product image must be an HTTP(S) URL or an optimized PNG, JPEG, or WebP image under 1.2 MB.' });
 
   try {
     const access = await productShopAccess(Number(id), req.user.userId);
@@ -939,7 +1020,7 @@ app.delete('/api/products/:id', authenticate, async (req, res) => {
 // ==========================================
 // SHOP OFFERS
 // ==========================================
-app.get('/api/offers', async (_req, res) => {
+app.get('/api/offers', rateLimit(120, 10 * 60 * 1000, 'public-offers'), async (_req, res) => {
   try {
     const result = await pool.query(
       `SELECT o.*, s.name AS shop_name, s.category AS shop_category, s.address, s.phone, s.whatsapp_number,
@@ -951,7 +1032,7 @@ app.get('/api/offers', async (_req, res) => {
        ORDER BY o.created_at DESC
        LIMIT 100`
     );
-    return res.json({ offers: result.rows });
+    return res.json({ offers: result.rows.map((offer) => ({ ...offer, google_map_link: externalHttpUrl(offer.google_map_link) || null })) });
   } catch (err) {
     console.error('Offers fetch error:', err);
     return res.status(500).json({ error: 'Unable to load offers.' });
@@ -1054,7 +1135,7 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-app.get('/api/reviews/:target/:id', async (req, res) => {
+app.get('/api/reviews/:target/:id', rateLimit(240, 10 * 60 * 1000, 'public-reviews'), async (req, res) => {
   const { target } = req.params;
   const id = Number(req.params.id);
   if (!id || !['shop', 'product'].includes(target)) return res.status(400).json({ error: 'Invalid review target.' });
@@ -1184,7 +1265,7 @@ app.get('/api/shops/:shopId/insights', authenticate, async (req, res) => {
 // ==========================================
 // 7. PRODUCT-FIRST NEARBY SEARCH
 // ==========================================
-app.get('/api/search/products', async (req, res) => {
+app.get('/api/search/products', rateLimit(120, 10 * 60 * 1000, 'product-search'), async (req, res) => {
   const { lat, lng, query = '', availability = 'all' } = req.query;
   const latitude = Number(lat);
   const longitude = Number(lng);
@@ -1274,7 +1355,7 @@ app.get('/api/search/products', async (req, res) => {
   }
 });
 
-app.get('/api/search/suggestions', async (req, res) => {
+app.get('/api/search/suggestions', rateLimit(240, 10 * 60 * 1000, 'search-suggestions'), async (req, res) => {
   const { lat, lng, query = '' } = req.query;
   const latitude = Number(lat);
   const longitude = Number(lng);
@@ -1584,8 +1665,8 @@ const handleExploreOrNearby = async (req, res) => {
   }
 };
 
-app.get('/api/explore', handleExploreOrNearby);
-app.get('/api/shops/nearby-products', handleExploreOrNearby);
+app.get('/api/explore', rateLimit(60, 10 * 60 * 1000, 'legacy-explore'), handleExploreOrNearby);
+app.get('/api/shops/nearby-products', rateLimit(60, 10 * 60 * 1000, 'legacy-explore'), handleExploreOrNearby);
 
 // ==========================================
 // 404 HANDLER
@@ -1600,12 +1681,12 @@ const startServer = async () => {
   try {
     validateProduction();
     await pool.initDb();
-    await Promise.all([refreshShopStatus(pool), refreshSubscriptionEntitlements(pool)]);
+    await refreshShopStatus(pool);
     let refreshing = false;
     const timer = setInterval(async () => {
       if (refreshing) return;
       refreshing = true;
-      try { await Promise.all([refreshShopStatus(pool), refreshSubscriptionEntitlements(pool)]); }
+      try { await refreshShopStatus(pool); }
       catch (error) { console.error('Shop schedule/subscription refresh failed:', error.message); }
       finally { refreshing = false; }
     }, 15000);

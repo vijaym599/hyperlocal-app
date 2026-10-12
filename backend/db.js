@@ -220,14 +220,6 @@ const initDb = async () => {
         ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) NOT NULL DEFAULT 'active',
         ADD COLUMN IF NOT EXISTS subscription_cancelled_at TIMESTAMP;
 
-      -- Bring existing paid shops in line with the Pro-and-above verified-badge benefit.
-      UPDATE shops
-      SET is_verified = TRUE,
-          verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
-      WHERE subscription_plan IN ('pro', 'advance', 'enterprise')
-        AND payment_id IS NOT NULL
-        AND is_verified = FALSE;
-
       ALTER TABLE products
         ADD COLUMN IF NOT EXISTS description TEXT,
         ADD COLUMN IF NOT EXISTS brand VARCHAR(100),

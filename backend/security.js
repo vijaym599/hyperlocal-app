@@ -32,7 +32,9 @@ const securityHeaders = (req, res, next) => {
     'X-Frame-Options': 'DENY',
   });
   if (production) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if (req.path.startsWith('/api/') && req.get('authorization')) res.set('Cache-Control', 'no-store');
+  if ((req.path.startsWith('/api/') && req.get('authorization')) || req.path.startsWith('/api/auth/')) {
+    res.set('Cache-Control', 'no-store');
+  }
   next();
 };
 

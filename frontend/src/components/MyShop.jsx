@@ -127,6 +127,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [loginData, setLoginData] = useState({ phone: '', password: '' });
   const [shopData, setShopData] = useState(session?.shop || null);
   const [products, setProducts] = useState([]);
+  const [productsTotal, setProductsTotal] = useState(0);
+  const [productsNextPage, setProductsNextPage] = useState(null);
+  const [serverStockCounts, setServerStockCounts] = useState({ available: 0, low_stock: 0, out_of_stock: 0 });
   const [productSearch, setProductSearch] = useState('');
   const [stockFilter, setStockFilter] = useState('all');
   const [productPage, setProductPage] = useState(1);
@@ -205,11 +208,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const subscriptionNeedsAttention = subscriptionDaysLeft == null || subscriptionDaysLeft <= 30 || shopData?.subscription_status === 'cancelled';
   const promotionApplies = (planId) => subscriptionPromotionEligible && subscriptionPromotion?.eligible_plans?.includes(planId) && Number(subscriptionPromotion.purchase_months) === 1;
   const todayIso = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
-  const stockCounts = useMemo(() => products.reduce((counts, p) => {
-    const status = p.availability_status || 'available';
-    counts[status] = (counts[status] || 0) + 1;
-    return counts;
-  }, {}), [products]);
+  const stockCounts = serverStockCounts;
   const filteredProducts = useMemo(() => {
     const term = productSearch.trim().toLowerCase();
     return products.filter(p => (stockFilter === 'all' || (p.availability_status || 'available') === stockFilter) && [p.name, p.brand, p.description].some(value => String(value || '').toLowerCase().includes(term)));
@@ -345,15 +344,18 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     finally { setNotificationsLoading(false); }
   };
 
-  const fetchProductsFromBackend = async (shopId) => {
+  const fetchProductsFromBackend = async (shopId, page = 1) => {
     if (!shopId) return;
     setFetchingProducts(true);
     setProductsError('');
     try {
-      const res = await fetch(`${API_BASE_URL}/api/shops/${shopId}/products`);
+      const res = await fetch(`${API_BASE_URL}/api/shops/${shopId}/products?page=${page}&limit=24`);
       if (res.ok) {
         const data = await res.json();
-        setProducts(data.products || []);
+        setProducts((current) => page === 1 ? (data.products || []) : [...current, ...(data.products || [])]);
+        setProductsTotal(Number(data.total || 0));
+        setProductsNextPage(data.next_page || null);
+        setServerStockCounts(data.stock_counts || { available: 0, low_stock: 0, out_of_stock: 0 });
       } else {
         setProductsError('Unable to load products. Please refresh to try again.');
       }
@@ -567,7 +569,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       return;
     }
 
-    if (products.length >= maxProductsAllowed) {
+    if (productsTotal >= maxProductsAllowed) {
       alert(`Product limit reached! Your current plan allows maximum ${maxProductsAllowed} products.`);
       return;
     }
@@ -656,6 +658,12 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update stock status.');
       setProducts((current) => current.map((item) => item.id === product.id ? { ...item, ...data.product } : item));
+      const previousStatus = product.availability_status || 'available';
+      setServerStockCounts((current) => ({
+        ...current,
+        [previousStatus]: Math.max(0, Number(current[previousStatus] || 0) - 1),
+        [availability_status]: Number(current[availability_status] || 0) + 1,
+      }));
     } catch (error) {
       alert(error.message);
     } finally {
@@ -1007,7 +1015,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </div>
           <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-bold">{shopData?.name || 'My Shop'}</h1>{shopData?.is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-400/15 px-2 py-1 text-[11px] font-bold text-sky-200"><BadgeCheck className="h-3.5 w-3.5" />Verified shop</span>}</div>
           <p className="text-xs text-slate-400 mt-1">
-            Plan: <span className="text-emerald-400 font-bold uppercase">{shopData?.subscription_plan || 'Free'}</span> ({products.length} / {maxProductsAllowed >= 9999 ? '∞' : maxProductsAllowed} Products)
+            Plan: <span className="text-emerald-400 font-bold uppercase">{shopData?.subscription_plan || 'Free'}</span> ({productsTotal} / {maxProductsAllowed >= 9999 ? '∞' : maxProductsAllowed} Products)
           </p>
           </div>
         </div>
@@ -1040,7 +1048,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       </div>
 
       {(dashboardSection === 'overview' || dashboardSection === 'catalog') && <div className={`grid grid-cols-2 gap-3 sm:grid-cols-4 ${dashboardSection === 'overview' ? 'mb-4' : 'mb-5'}`}>
-        {[['Listed products', products.length, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { setDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
+        {[['Listed products', productsTotal, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { setDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
       </div>}
       {dashboardSection === 'overview' && shopData?.id && !shopData.phone && !shopData.whatsapp_number && <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><p className="font-bold text-amber-950">Customer contact is missing</p><p className="mt-1 text-sm text-amber-800">Add a Call or WhatsApp number so customers can contact your shop. Your account login number stays private.</p></div></div><button type="button" onClick={openShopEditor} className="rounded-xl bg-amber-700 px-4 py-2 text-xs font-bold text-white">Add contact</button></div></section>}
       {dashboardSection === 'overview' && shopData?.id && <ShopShare shop={shopData} compact />}
@@ -1197,8 +1205,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         {/* Product List */}
         <div className="min-w-0 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-bold text-slate-800 text-lg">Listed Products ({products.length})</h3>
-            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }} placeholder="Search catalog by product name or brand" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
+            <h3 className="font-bold text-slate-800 text-lg">Listed Products ({productsTotal})</h3>
+            <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }} placeholder="Search loaded catalog" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
           </div>
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="text-xs font-semibold text-slate-600">Stock filter <select value={stockFilter} onChange={event => { setStockFilter(event.target.value); setProductPage(1); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="all">All products</option>{AVAILABILITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span className="text-xs text-slate-500">{filteredProducts.length} matching products</span></div>
@@ -1244,6 +1252,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             </div>
           )}
           {pageCount > 1 && <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4"><button type="button" disabled={currentPage === 1} onClick={() => setProductPage(currentPage - 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-40">Previous</button><span className="text-xs text-slate-500">Page {currentPage} of {pageCount}</span><button type="button" disabled={currentPage === pageCount} onClick={() => setProductPage(currentPage + 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-40">Next</button></div>}
+          {productsNextPage && <div className="mt-4 text-center"><button type="button" disabled={fetchingProducts} onClick={() => fetchProductsFromBackend(shopData?.id, productsNextPage)} className="rounded-xl border border-emerald-600 px-5 py-2.5 text-sm font-bold text-emerald-700 disabled:opacity-50">{fetchingProducts ? 'Loading products…' : 'Load more products'}</button></div>}
         </div>
       </div>}
 
