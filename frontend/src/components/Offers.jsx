@@ -34,7 +34,7 @@ export default function Offers({ session, onOpenShop }) {
   if (state !== 'ready') return <div className="mx-auto max-w-6xl px-5 py-16 text-center text-sm text-rose-600">{state}</div>;
 
   return <section className="mx-auto max-w-6xl px-3 py-3 sm:px-8 sm:py-6">
-    <header className="rounded-3xl bg-gradient-to-br from-rose-500 via-orange-500 to-amber-500 p-5 text-white shadow-lg sm:p-10">
+    <header className="rounded-3xl bg-slate-950 p-5 text-white shadow-sm sm:p-10">
       <span className="inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-bold"><Tag className="h-4 w-4" />Local shop offers</span>
       <h1 className="mt-4 text-3xl font-extrabold sm:text-4xl">Today’s offers near you</h1>
       <p className="mt-2 max-w-xl text-sm leading-6 text-orange-50">Browse offers published directly by local shops. Contact the shop to confirm stock and offer terms.</p>

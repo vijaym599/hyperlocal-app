@@ -77,7 +77,7 @@ export default function ShopPortfolio({ shopId, initialShop, onBack, onRequireLo
     <button onClick={onBack} className="mb-3 flex min-h-10 items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"><ArrowLeft className="h-4 w-4" />{backLabel}</button>
     <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-lg lg:grid lg:grid-cols-[0.9fr_1.1fr]">
       <ShopImage shop={shop} className="h-40 w-full object-cover sm:h-52 lg:h-full lg:min-h-[230px]" />
-      <header className="bg-gradient-to-br from-emerald-700 to-teal-800 p-4 text-white sm:p-5">
+      <header className="bg-slate-950 p-4 text-white sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2"><Store className="h-5 w-5 shrink-0" /><h1 className="truncate text-xl font-extrabold sm:text-2xl">{shop.name}</h1>{shop.is_verified && <BadgeCheck className="h-5 w-5 shrink-0 text-sky-200" />}</div>

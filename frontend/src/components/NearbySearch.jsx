@@ -768,7 +768,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         <EmptyState title="Choose your location" description={locationError || 'Allow GPS access or choose an area to discover nearby products.'} onAction={getUserLocation} actionLabel="Try GPS again" />
       ) : searchError && processedProducts.length === 0 ? <ErrorState error={searchError} onRetry={() => fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)} /> : (
         <div className="space-y-6">
-          <div className="neo-inset sticky top-[7.75rem] z-20 grid grid-cols-2 gap-2 rounded-2xl p-1.5 lg:top-20" role="tablist" aria-label="Discovery results">
+          <div className="ui-control sticky top-[7.75rem] z-20 grid grid-cols-2 gap-2 rounded-2xl p-1.5 lg:top-20" role="tablist" aria-label="Discovery results">
             <button type="button" role="tab" aria-selected={resultsView === 'products'} onClick={() => setResultsView('products')} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${resultsView === 'products' ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600'}`}><Package className="mr-2 inline h-4 w-4" />Products <span className="ml-1 text-xs opacity-75">{processedProducts.length}</span></button>
             <button type="button" role="tab" aria-selected={resultsView === 'shops'} onClick={() => setResultsView('shops')} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${resultsView === 'shops' ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600'}`}><Store className="mr-2 inline h-4 w-4" />Shops <span className="ml-1 text-xs opacity-75">{processedShops.length}</span></button>
           </div>

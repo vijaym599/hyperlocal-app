@@ -35,7 +35,7 @@ export default function LegalContent({ type, onBack }) {
         <ArrowLeft className="h-4 w-4" /> Back to Nearbuy
       </button>
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-br from-emerald-700 to-teal-700 px-6 py-10 text-white sm:px-10">
+        <div className="bg-slate-950 px-6 py-10 text-white sm:px-10">
           <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wider"><Icon className="h-3.5 w-3.5" />{content.eyebrow}</span>
           <h1 className="mt-5 text-3xl font-black tracking-tight sm:text-4xl">{content.title}</h1>
           <p className="mt-4 max-w-2xl text-sm leading-6 text-emerald-50 sm:text-base">{content.intro}</p>

@@ -6,7 +6,7 @@ export default function ReportIssue({ session, role, onBack, onCustomerLogin, on
 
   return <section className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 sm:py-10">
     <button type="button" onClick={onBack} className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 hover:text-emerald-900"><ArrowLeft className="h-4 w-4" />Back</button>
-    <header className="rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-6 text-white shadow-xl sm:p-8">
+    <header className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm sm:p-8">
       <span className="inline-flex rounded-2xl bg-amber-400/15 p-3 text-amber-300"><CircleAlert className="h-7 w-7" /></span>
       <h1 className="mt-4 text-3xl font-black tracking-tight">Submit a complaint</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">Tell us what happened. Your complaint is private and visible only to your account and Nearbuy administrators.</p>

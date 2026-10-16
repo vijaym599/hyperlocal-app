@@ -25,12 +25,12 @@ export default function Footer({ setActiveTab }) {
   const goTo = (tab) => () => { setActiveTab?.(tab); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   return (
-    <footer className="neo-footer relative mt-auto overflow-hidden bg-slate-950 text-slate-300">
+    <footer className="ui-footer relative mt-auto overflow-hidden bg-slate-950 text-slate-300">
       <div className="relative mx-auto max-w-7xl px-3 py-8 text-left sm:px-6 sm:py-10 lg:py-12">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4 lg:gap-6">
           <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
             <button type="button" onClick={goTo('explore')} className="flex items-center gap-2.5 text-left">
-              <span className="rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 p-2 text-slate-950 shadow-lg shadow-emerald-500/20">
+              <span className="rounded-xl bg-emerald-400 p-2 text-slate-950">
                 <Store className="h-5 w-5" />
               </span>
               <span className="text-xl font-black tracking-tight text-white">Nearbuy</span>

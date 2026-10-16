@@ -38,7 +38,7 @@ export function StatePanel({
     <section
       role={resolvedRole}
       aria-live={resolvedRole === 'alert' ? 'assertive' : 'polite'}
-      className={`neo-panel overflow-hidden rounded-3xl border bg-white/80 text-center ${compact ? 'p-5' : 'px-5 py-10 sm:px-8 sm:py-12'} ${className}`}
+      className={`ui-panel overflow-hidden rounded-3xl border bg-white text-center ${compact ? 'p-5' : 'px-5 py-10 sm:px-8 sm:py-12'} ${className}`}
     >
       <span className={`mx-auto flex items-center justify-center rounded-2xl border ${compact ? 'h-11 w-11' : 'h-14 w-14'} ${toneByKind[kind] || toneByKind.empty}`}>
         <Icon aria-hidden="true" className={compact ? 'h-5 w-5' : 'h-6 w-6'} />
@@ -63,7 +63,7 @@ export function EmptyState({ title, description, onAction, actionLabel = 'Refres
 }
 
 export function LoadingState({ label = 'Loading…', rows = 3, compact = false, className = '' }) {
-  return <section role="status" aria-live="polite" aria-busy="true" className={`neo-panel rounded-3xl border border-slate-200 bg-white/70 ${compact ? 'p-4' : 'p-6 sm:p-8'} ${className}`}><div className="flex items-center gap-3 text-sm font-bold text-slate-600"><LoaderCircle aria-hidden="true" className="h-5 w-5 animate-spin text-emerald-600" /><span>{label}</span></div><span className="sr-only">Please wait</span><div aria-hidden="true" className="mt-5 space-y-3">{Array.from({ length: rows }, (_, index) => <div key={index} className={`neo-inset animate-pulse rounded-xl ${index === rows - 1 ? 'h-10 w-2/3' : 'h-14 w-full'}`} />)}</div></section>;
+  return <section role="status" aria-live="polite" aria-busy="true" className={`ui-panel rounded-3xl border border-slate-200 bg-white ${compact ? 'p-4' : 'p-6 sm:p-8'} ${className}`}><div className="flex items-center gap-3 text-sm font-bold text-slate-600"><LoaderCircle aria-hidden="true" className="h-5 w-5 animate-spin text-emerald-600" /><span>{label}</span></div><span className="sr-only">Please wait</span><div aria-hidden="true" className="mt-5 space-y-3">{Array.from({ length: rows }, (_, index) => <div key={index} className={`ui-control animate-pulse rounded-xl ${index === rows - 1 ? 'h-10 w-2/3' : 'h-14 w-full'}`} />)}</div></section>;
 }
 
 export function FeedbackBanner({ tone = 'error', children, className = '' }) {

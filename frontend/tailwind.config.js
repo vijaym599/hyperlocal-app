@@ -8,20 +8,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: 'var(--neo-canvas)',
-        surface: 'var(--neo-surface)',
-        ink: 'var(--neo-text)',
-        muted: 'var(--neo-muted)',
-        brand: 'var(--neo-accent)',
+        canvas: 'var(--ui-canvas)',
+        surface: 'var(--ui-surface)',
+        ink: 'var(--ui-text)',
+        muted: 'var(--ui-muted)',
+        brand: 'var(--ui-accent)',
       },
       borderRadius: {
-        soft: 'var(--neo-radius)',
+        soft: 'var(--ui-radius)',
       },
       boxShadow: {
-        soft: 'var(--neo-shadow-raised)',
-        'soft-sm': 'var(--neo-shadow-raised-sm)',
-        inset: 'var(--neo-shadow-inset)',
-        pressed: 'var(--neo-shadow-pressed)',
+        soft: 'var(--ui-shadow)',
+        'soft-sm': 'var(--ui-shadow-sm)',
+        inset: 'var(--ui-shadow-inset)',
+        pressed: 'var(--ui-shadow-pressed)',
       },
     },
   },
