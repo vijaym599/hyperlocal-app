@@ -16,11 +16,17 @@ import Offers from './components/Offers';
 import { referralFromSearch } from './referrals.mjs';
 import { trackPageVisit } from './analytics.mjs';
 import { shopIdFromSearch } from './shopLinks.mjs';
+import { applyTheme, getInitialTheme, getVisibleTheme, persistTheme } from './theme.mjs';
+import NetworkStatusBanner from './components/NetworkStatusBanner';
+import { LoadingState, StatePanel } from './components/ui/StatePanel';
 
 const PricingPage = lazy(() => import('./components/PricingPage'));
 const CustomerAssistant = lazy(() => import('./components/CustomerAssistant'));
+const DISPLAY_TABS = new Set(['shop-directory', 'explore', 'offers', 'assistant', 'shop-portfolio', 'customer-auth', 'activity', 'my-shop', 'about', 'privacy', 'terms', 'report-issue', 'demand', 'pricing']);
 
 export default function App() {
+  const [theme, setTheme] = useState(getInitialTheme);
+
   // Resolve the requested page against the current account's access.
   const [requestedTab, setActiveTab] = useState(() => new URLSearchParams(window.location.search).has('shop') ? 'shop-portfolio' : referralFromSearch(window.location.search) ? 'my-shop' : null);
   const [portfolioShop, setPortfolioShop] = useState(() => {
@@ -54,8 +60,14 @@ export default function App() {
     localStorage.setItem('hyperlocal-session', JSON.stringify(nextSession));
     setSession(nextSession);
   };
+  const toggleTheme = () => setTheme(currentTheme => currentTheme === 'dark' ? 'light' : 'dark');
 
   const role = getRole(session);
+  const visibleTheme = getVisibleTheme(theme, role !== 'guest');
+  useEffect(() => {
+    applyTheme(visibleTheme);
+    if (role !== 'guest') persistTheme(theme);
+  }, [role, theme, visibleTheme]);
   const activeTab = resolveTab(requestedTab || homeTab(session), session, portfolioShop);
   useEffect(() => { if (role !== 'admin') trackPageVisit(activeTab); }, [activeTab, role]);
 
@@ -67,9 +79,9 @@ export default function App() {
         setActiveTab={setActiveTab} 
         session={session}
         role={role}
-        onLogout={handleLogout}
         onCustomerAuth={() => { setPostLoginTab(null); setActiveTab('customer-auth'); }}
       />
+      <NetworkStatusBanner />
 
       {/* Dynamic Content based on activeTab */}
       <main id="main-content" className="min-w-0 flex-grow py-3 sm:py-8">
@@ -78,13 +90,13 @@ export default function App() {
 
         {activeTab === 'offers' && (role === 'guest' || role === 'customer') && <Offers session={session} />}
 
-        {activeTab === 'assistant' && (role === 'guest' || role === 'customer') && <Suspense fallback={<div className="mx-auto max-w-6xl px-5 py-20 text-center text-sm font-semibold text-slate-500">Loading AI assistant…</div>}><CustomerAssistant onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} /></Suspense>}
+        {activeTab === 'assistant' && (role === 'guest' || role === 'customer') && <Suspense fallback={<LoadingState label="Loading AI assistant…" className="mx-auto max-w-6xl" />}><CustomerAssistant onOpenShop={(shop) => { setPortfolioShop(shop); setActiveTab('shop-portfolio'); window.scrollTo({ top: 0 }); }} /></Suspense>}
 
         {activeTab === 'shop-portfolio' && portfolioShop && <ShopPortfolio session={session} key={portfolioShop.id} shopId={portfolioShop.id} initialShop={portfolioShop} backLabel={role === 'shop_owner' || role === 'admin' ? 'Back to dashboard' : 'Back to nearby shops'} onBack={() => setActiveTab(homeTab(session))} onRequireLogin={() => { setPostLoginTab('shop-portfolio'); setActiveTab('customer-auth'); }} />}
 
         {activeTab === 'customer-auth' && <CustomerAuth onLoginSuccess={handleLoginSuccess} onChooseShop={() => setActiveTab('my-shop')} onBack={() => { setActiveTab(postLoginTab || 'explore'); setPostLoginTab(null); }} />}
 
-        {activeTab === 'activity' && role === 'customer' && <UserActivity session={session} onLogout={handleLogout} onSessionUpdate={handleSessionUpdate} />}
+        {activeTab === 'activity' && role === 'customer' && <UserActivity session={session} onLogout={handleLogout} onSessionUpdate={handleSessionUpdate} theme={theme} onToggleTheme={toggleTheme} />}
         
         {activeTab === 'my-shop' && (role === 'guest' || role === 'shop_owner') && (
           <MyShop 
@@ -92,6 +104,8 @@ export default function App() {
             session={session} 
             onLoginSuccess={handleLoginSuccess}
             onLogout={handleLogout}
+            theme={theme}
+            onToggleTheme={toggleTheme}
           />
         )}
 
@@ -103,9 +117,11 @@ export default function App() {
 
         {activeTab === 'report-issue' && <ReportIssue session={session} role={role} onBack={() => setActiveTab(homeTab(session))} onCustomerLogin={() => { setPostLoginTab('report-issue'); setActiveTab('customer-auth'); }} onShopLogin={() => { setPostLoginTab('report-issue'); setActiveTab('my-shop'); }} />}
 
-        {activeTab === 'demand' && role === 'admin' && <AdminDashboard session={session} />}
+        {activeTab === 'demand' && role === 'admin' && <AdminDashboard session={session} onSessionExpired={handleLogout} theme={theme} onToggleTheme={toggleTheme} />}
 
-        {activeTab === 'pricing' && <Suspense fallback={<div className="mx-auto max-w-7xl px-5 py-20 text-center text-sm font-semibold text-slate-500">Loading pricing plans…</div>}><PricingPage onBack={() => setActiveTab(role === 'shop_owner' ? 'my-shop' : 'explore')} onStart={() => setActiveTab('my-shop')} /></Suspense>}
+        {activeTab === 'pricing' && <Suspense fallback={<LoadingState label="Loading pricing plans…" className="mx-auto max-w-7xl" />}><PricingPage onBack={() => setActiveTab(role === 'shop_owner' ? 'my-shop' : 'explore')} onStart={() => setActiveTab('my-shop')} /></Suspense>}
+
+        {!DISPLAY_TABS.has(activeTab) && <div className="mx-auto max-w-4xl px-4 py-8"><StatePanel kind="not-found" title="Page not found" description="The page you requested does not exist or is no longer available." primaryAction={{ label: 'Go home', onClick: () => setActiveTab(homeTab(session)) }} /></div>}
       </main>
 
       {/* Common Footer Component with setActiveTab prop */}

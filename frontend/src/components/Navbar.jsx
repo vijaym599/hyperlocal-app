@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Store, Compass, PlusCircle, Menu, X, LogOut, User, BarChart3, LogIn, Tag, Sparkles, House, Search, BellRing, Building2, CircleUserRound } from 'lucide-react';
+import { Store, Compass, PlusCircle, Menu, X, User, BarChart3, LogIn, Tag, Sparkles, House, Search, BellRing, Building2, CircleUserRound } from 'lucide-react';
 
-const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAuth }) => {
+const Navbar = ({ activeTab, setActiveTab, session, role, onCustomerAuth }) => {
   const [isOpen, setIsOpen] = useState(false);
   const homeTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'explore';
   const signedInLabel = role === 'shop_owner'
@@ -22,10 +22,9 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
     setIsOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-
   return (
     <>
-    <nav className="sticky top-0 z-50 border-b border-white/60 bg-white/65 shadow-[0_10px_35px_rgba(15,23,42,0.07)] backdrop-blur-2xl backdrop-saturate-150 supports-[backdrop-filter]:bg-white/55">
+    <nav className="neo-navbar sticky top-0 z-50 border-b border-white/70 bg-white/70 backdrop-blur-2xl backdrop-saturate-150">
       <div className="mx-auto w-full max-w-[1600px] px-5 sm:px-8 lg:px-10">
         <div className="flex items-center justify-between h-16">
           
@@ -91,20 +90,10 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
 
             {/* Shop owners sign in from the My Shop portal only. */}
             {session?.token ? (
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setActiveTab(accountTab)} className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition ${activeTab === accountTab ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  <User className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <span className="block max-w-32 truncate text-xs font-bold">{signedInLabel}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 px-2 py-1 transition cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  Sign out
-                </button>
-              </div>
+              <button type="button" onClick={() => setActiveTab(accountTab)} className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition ${activeTab === accountTab ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                <User className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span className="block max-w-32 truncate text-xs font-bold">{signedInLabel}</span>
+              </button>
             ) : role === 'guest' ? <button onClick={onCustomerAuth} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><LogIn className="w-3.5 h-3.5" />Sign in</button> : null}
           </div>
 
@@ -115,7 +104,6 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
                 return <button key={id} type="button" onClick={() => navigateMobile(target)} aria-current={selected ? 'page' : undefined} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-all duration-200 lg:px-4 ${selected ? 'bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-300 text-slate-950 shadow-[0_7px_20px_rgba(52,211,153,0.28)]' : 'text-slate-300 hover:bg-white/10 hover:text-white'}`}><Icon className="h-4 w-4" strokeWidth={selected ? 2.5 : 1.8} /><span>{label}</span></button>;
               })}
             </div>
-            {session?.token && <button type="button" onClick={onLogout} title="Sign out" aria-label="Sign out" className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/80 bg-white/60 text-rose-600 shadow-sm backdrop-blur-xl transition hover:border-rose-200 hover:bg-rose-50"><LogOut className="h-4 w-4" /></button>}
           </div>}
 
           {/* Mobile Menu Toggle Button */}
@@ -188,18 +176,10 @@ const Navbar = ({ activeTab, setActiveTab, session, role, onLogout, onCustomerAu
           )}
           <div className="pt-2 border-t border-slate-200">
             {session?.token ? (
-              <div className="flex items-center gap-2 px-2 py-1">
-                <button type="button" onClick={() => { setActiveTab(accountTab); setIsOpen(false); }} className={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 text-left ${activeTab === accountTab ? 'bg-emerald-100 text-emerald-800' : 'bg-white text-slate-700'}`}>
-                  <User className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <span className="block min-w-0 truncate text-xs font-bold">{signedInLabel}</span>
-                </button>
-                <button
-                  onClick={onLogout}
-                  className="shrink-0 text-xs font-bold text-rose-600 hover:underline"
-                >
-                  Sign out
-                </button>
-              </div>
+              <button type="button" onClick={() => { setActiveTab(accountTab); setIsOpen(false); }} className={`flex w-full min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left ${activeTab === accountTab ? 'bg-emerald-100 text-emerald-800' : 'bg-white text-slate-700'}`}>
+                <User className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span className="block min-w-0 truncate text-xs font-bold">{signedInLabel}</span>
+              </button>
             ) : role === 'guest' ? <button onClick={() => { onCustomerAuth(); setIsOpen(false); }} className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Sign in</button> : null}
           </div>
         </div>

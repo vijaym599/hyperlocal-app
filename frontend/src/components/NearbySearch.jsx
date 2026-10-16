@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X, LocateFixed } from 'lucide-react';
 import { productUrl, shopUrl } from '../publicUrls';
 import ProductSkeleton from './ProductSkeleton';
+import ProductImage from './ProductImage';
 import DistanceSelector from './DistanceSelector';
 import { readDiscoveryCache, writeDiscoveryCache, discoveryKey } from '../discoveryCache.mjs';
 import { API_BASE_URL } from '../config';
@@ -9,6 +10,8 @@ import ShopImage from './ShopImage';
 import IndianPhoneInput from './IndianPhoneInput';
 import { indianPhoneE164 } from '../phone.mjs';
 import { trackShopActivity } from '../activity.mjs';
+import { requestError } from '../requestState.mjs';
+import { EmptyState, ErrorState, FeedbackBanner } from './ui/StatePanel';
 
 // Instagram Story Style Categories Data
 const CATEGORIES = [
@@ -215,7 +218,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const [showAreaPicker, setShowAreaPicker] = useState(false);
   const locationVersion = useRef(0);
   const areaController = useRef(null);
-  const [searchError, setSearchError] = useState('');
+  const [searchError, setSearchError] = useState(null);
   const searchController = useRef(null);
   const searchVersion = useRef(0);
   const [userLocation, setUserLocation] = useState(initialCache?.location || null);
@@ -279,16 +282,15 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
     searchController.current = controller;
     const version = ++searchVersion.current;
     setLoading(true);
-    setSearchError('');
+    setSearchError(null);
     try {
       const params = new URLSearchParams({ lat: String(lat), lng: String(lng), query, availability, category, page: String(page), limit: String(PAGE_SIZE) });
       if (radius) params.set('radius', radius);
       const url = `${API_BASE_URL}/api/search/products?${params}`;
 
       const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`Search request failed with status ${res.status}`);
-
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw requestError(res, data.error || 'Unable to search nearby products.');
       if (version !== searchVersion.current) return;
       const results = Array.isArray(data.results) ? data.results : [];
       const mapped = mapDiscoveryResults(results);
@@ -304,7 +306,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       }
     } catch (err) {
       if (err.name === 'AbortError' || version !== searchVersion.current) return;
-      setSearchError('Unable to search nearby products. Please try again.');
+      setSearchError(err);
       console.error('Error fetching nearby products:', err);
     } finally {
       if (version === searchVersion.current) setLoading(false);
@@ -342,7 +344,11 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         if (usableLocationRef.current) {
           setLocationError(null);
         } else {
-          setLocationError('We could not get your location. Turn on GPS or choose an area.');
+          setLocationError(error.code === 1
+            ? 'Location permission was denied. Allow location access in your browser settings, or choose an area below.'
+            : error.code === 3
+              ? 'Finding your location timed out. Try GPS again, or choose an area below.'
+              : 'Your location is currently unavailable. Turn on GPS, or choose an area below.');
           setShowAreaPicker(true);
         }
         setGettingLocation(false);
@@ -424,7 +430,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const chooseArea = (place) => {
     locationVersion.current += 1;
     searchController.current?.abort(); searchVersion.current += 1;
-    setGettingLocation(false); setLocationError(null); setSearchError('');
+    setGettingLocation(false); setLocationError(null); setSearchError(null);
     setProducts([]); setShops([]); setCachedResults(false); setHasMore(false);
     const location = { lat: place.lat, lng: place.lng, name: place.name, source: 'manual' };
     usableLocationRef.current = location;
@@ -754,15 +760,12 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       </div>
 
       {resultsMatch && (cachedResults || (loading && products.length > 0)) && <p role="status" className="mb-4 text-sm font-semibold text-emerald-700">{cachedResults ? (loading ? 'Showing saved results. Updating prices and stock…' : 'Showing saved results. Prices and stock may have changed.') : 'Updating products…'}</p>}
-      {searchError && <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-        <p>{searchError}{resultsMatch && products.length > 0 ? ' Showing previously loaded results.' : ''}</p>
-        <button className="mt-2 font-bold underline" onClick={() => userLocation && fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)}>Retry search</button>
-      </div>}
+      {searchError && resultsMatch && products.length > 0 && <FeedbackBanner className="mb-4"><p>Unable to refresh results. Showing previously loaded products.</p><button type="button" className="mt-2 font-bold underline" onClick={() => userLocation && fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)}>Retry search</button></FeedbackBanner>}
       {processedProducts.length === 0 && ((!searchError && userLocation && (loading || !resultsMatch)) || gettingLocation) ? (
         <ProductSkeleton />
       ) : !userLocation ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">Choose an area or allow GPS to discover nearby products.</div>
-      ) : searchError && processedProducts.length === 0 ? null : (
+        <EmptyState title="Choose your location" description={locationError || 'Allow GPS access or choose an area to discover nearby products.'} onAction={getUserLocation} actionLabel="Try GPS again" />
+      ) : searchError && processedProducts.length === 0 ? <ErrorState error={searchError} onRetry={() => fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)} /> : (
         <div className="space-y-10">
           
           {/* ================= SECTION 1: PRODUCTS NEARBY ================= */}
@@ -779,10 +782,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
 
             {processedProducts.length === 0 ? (
               <div className="space-y-4">
-                <div className="text-center py-10 bg-white rounded-2xl border border-dashed border-slate-200">
-                  <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500 font-medium">No matching products found nearby.</p>
-                </div>
+                <EmptyState kind="search" compact title="No matching products nearby" description="Try a different product name, category, distance, or availability filter." />
                 {searchQuery.trim().length >= 2 && (
                   <form onSubmit={handleProductRequest} className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                     <p className="text-sm font-bold text-emerald-900">Need “{searchQuery.trim()}” nearby?</p>
@@ -809,16 +809,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                     >
                       <div>
                         {/* Image */}
-                        <img
-                          src={p.image_url || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300'}
-                          alt={p.name || 'Product'}
-                          loading="lazy"
-                          decoding="async"
-                          className="mb-3 h-44 w-full rounded-2xl object-cover transition duration-500 group-hover:scale-[1.02]"
-                          onError={(e) => {
-                            e.target.src = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300';
-                          }}
-                        />
+                        <ProductImage product={p} className="mb-3 h-44 w-full rounded-2xl transition duration-500 group-hover:scale-[1.02]" />
                         
                         {/* Name & Price */}
                         <h4 className="font-bold text-slate-800 text-base line-clamp-1">
@@ -972,7 +963,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
               <div><h2 className="text-xl font-bold text-slate-800">{selectedProduct.name}</h2><p className="mt-1 text-lg font-extrabold text-emerald-600">₹{selectedProduct.price}</p></div>
               <button onClick={() => setSelectedProduct(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
-            <img src={selectedProduct.image_url || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=600'} alt={selectedProduct.name} className="mt-4 h-52 w-full rounded-xl object-cover" />
+            <ProductImage product={selectedProduct} className="mt-4 h-52 w-full rounded-xl" />
             <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${availabilityPresentation(selectedProduct.availability_status).className}`}>{availabilityPresentation(selectedProduct.availability_status).label}</span><RatingBadge rating={selectedProduct.product_average_rating} count={selectedProduct.product_review_count} label="Product rating" />{selectedProduct.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified shop</span>}</div>
             {selectedProduct.brand && <p className="mt-4 text-sm font-semibold text-slate-700">{selectedProduct.brand}</p>}
             {selectedProduct.description && <p className="mt-2 text-sm leading-6 text-slate-600">{selectedProduct.description}</p>}

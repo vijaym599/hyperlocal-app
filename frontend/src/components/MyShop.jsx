@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, KeyRound, LayoutDashboard, Loader2, MessageSquareWarning, Search, Star, Upload, RefreshCw, LogOut, Pencil, X, Tag, Trash2 } from 'lucide-react';
+import { Store, Package, Plus, UserPlus, LogIn, ArrowLeft, AlertTriangle, BadgeCheck, BarChart3, Bell, CalendarDays, Eye, EyeOff, Gift, LayoutDashboard, Loader2, MessageSquareWarning, Search, Star, Upload, RefreshCw, LogOut, Pencil, UserRound, X, Tag, Trash2 } from 'lucide-react';
 import { parseProductCsv } from '../csv.mjs';
 import { API_BASE_URL } from '../config';
 import { referralFromSearch } from '../referrals.mjs';
@@ -8,10 +8,13 @@ import ForgotPassword from './ForgotPassword';
 import PasswordChangeForm from './PasswordChangeForm';
 import ShopShare from './ShopShare';
 import ShopImage from './ShopImage';
+import ProductImage from './ProductImage';
 import IndianPhoneInput from './IndianPhoneInput';
 import { indianLocalPhone, indianPhoneE164 } from '../phone.mjs';
 import MyReports from './MyReports';
 import ChangePhoneForm from './ChangePhoneForm';
+import ThemePreference from './ThemePreference';
+import { EmptyState, FeedbackBanner, LoadingState } from './ui/StatePanel';
 
 const SUBSCRIPTION_PLANS = [
   { id: 'basic', name: 'Basic', price: 120, limit: 10, desc: 'Monthly plan · upgrade anytime' },
@@ -43,7 +46,6 @@ const SHOP_CATEGORIES = [
   'Others'
 ];
 
-const productFallbackImage = (product) => `https://loremflickr.com/640/480/${encodeURIComponent(`${product.brand || ''} ${product.name || 'local product'}`.trim())}`;
 const AVAILABILITY_OPTIONS = [
   { value: 'available', label: 'Available' },
   { value: 'low_stock', label: 'Low stock' },
@@ -119,7 +121,7 @@ const fetchSubscriptionQueue = async (shopId, token, signal) => {
   return data.subscriptions || [];
 };
 
-const MyShop = ({ session, onLoginSuccess, onLogout }) => {
+const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTheme }) => {
   const [viewMode, setViewMode] = useState(session?.token ? 'dashboard' : referralFromSearch(window.location.search) ? 'register_wizard' : 'choice');
   const [wizardStep, setWizardStep] = useState(1);
   const [selectedSubscriptionPlan, setSelectedSubscriptionPlan] = useState(null);
@@ -134,6 +136,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [stockFilter, setStockFilter] = useState('all');
   const [productPage, setProductPage] = useState(1);
   const [productsError, setProductsError] = useState('');
+  const [productNotice, setProductNotice] = useState('');
   const [updatingStockId, setUpdatingStockId] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
@@ -147,6 +150,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const [insightsError, setInsightsError] = useState('');
   const [fetchingProducts, setFetchingProducts] = useState(false);
   const [fetchingLoc, setFetchingLoc] = useState(false);
+  const [registrationLocationMessage, setRegistrationLocationMessage] = useState('');
+  const [dashboardFeedback, setDashboardFeedback] = useState(null);
   const [imageUploadMessage, setImageUploadMessage] = useState('');
   const [shopImageUploadMessage, setShopImageUploadMessage] = useState('');
   const [shopOffers, setShopOffers] = useState([]);
@@ -296,7 +301,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     if (action === 'change' && !window.confirm(`Buy the ${plan} plan for ₹${SUBSCRIPTION_PLANS.find(item => item.id === plan)?.price}? ${subscriptionIsActive ? 'It will wait in your activation queue. Activating it replaces the remaining current term.' : 'Your shop is expired, so it will start immediately.'}`)) return;
     if (action === 'renew' && !window.confirm(`Renew the ${plan} plan? ${subscriptionIsActive ? 'The purchase will wait safely in your activation queue until you choose to activate it.' : 'Your shop is expired, so the new term will start immediately.'}`)) return;
     if (action === 'cancel' && !window.confirm('Cancel automatic renewal? Your current plan stays active until its billing period ends.')) return;
-    setLoading(true);
+    setLoading(true); setDashboardFeedback(null);
     try {
       const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/subscription`, { method: 'PATCH', headers: authenticatedJsonHeaders(), body: JSON.stringify({ action, plan, payment_id: action === 'cancel' ? undefined : `MOCK_PAY_${Date.now()}` }) });
       const data = await response.json();
@@ -305,16 +310,17 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       setShopData(data.shop);
       if (data.queued_subscription) {
         setSubscriptionQueue((items) => [...items, data.queued_subscription]);
-        alert(data.message);
+        setDashboardFeedback({ tone: 'success', message: data.message });
       }
       const updatedSession = { ...session, shop: data.shop };
       localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession)); onLoginSuccess?.(updatedSession);
-    } catch (error) { alert(error.message); } finally { setLoading(false); }
+      if (!data.queued_subscription) setDashboardFeedback({ tone: 'success', message: data.message || 'Subscription updated successfully.' });
+    } catch (error) { setDashboardFeedback({ tone: 'error', message: error.message }); } finally { setLoading(false); }
   };
 
   const activateQueuedSubscription = async (queued) => {
     if (!shopData?.id || !window.confirm(`Activate the queued ${queued.plan} plan now? Your current plan's remaining days will be replaced.`)) return;
-    setActivatingQueueId(queued.id);
+    setActivatingQueueId(queued.id); setDashboardFeedback(null);
     try {
       const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/subscription-queue/${queued.id}/activate`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}` } });
       const data = await response.json();
@@ -324,7 +330,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const updatedSession = { ...session, shop: data.shop };
       localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession));
       onLoginSuccess?.(updatedSession);
-    } catch (error) { alert(error.message); }
+      setDashboardFeedback({ tone: 'success', message: 'Queued subscription activated successfully.' });
+    } catch (error) { setDashboardFeedback({ tone: 'error', message: error.message }); }
     finally { setActivatingQueueId(null); }
   };
 
@@ -454,8 +461,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   };
 
   const handleGetCurrentLocation = () => {
+    setRegistrationLocationMessage('');
     if (!navigator.geolocation) {
-      alert("Browser does not support Geolocation.");
+      setRegistrationLocationMessage('This browser does not support location services. Enter the shop latitude and longitude manually.');
       return;
     }
     setFetchingLoc(true);
@@ -470,7 +478,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       },
       (err) => {
         setFetchingLoc(false);
-        alert("Unable to fetch location: " + err.message);
+        setRegistrationLocationMessage(err.code === 1
+          ? 'Location permission was denied. Allow access in browser settings, or enter the coordinates manually.'
+          : err.code === 3
+            ? 'Location detection timed out. Try again, or enter the coordinates manually.'
+            : 'The current location is unavailable. Check GPS, or enter the coordinates manually.');
       },
       { enableHighAccuracy: true }
     );
@@ -493,7 +505,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       if (contentType && contentType.indexOf("application/json") !== -1) {
         data = await res.json();
       } else {
-        throw new Error(`Server error (${res.status}). Please check backend terminal.`);
+        throw new Error('The sign-in service is temporarily unavailable. Please try again shortly.');
       }
 
       if (!res.ok) throw new Error(data.error || 'Login failed');
@@ -536,7 +548,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       if (contentType && contentType.indexOf("application/json") !== -1) {
         data = await res.json();
       } else {
-        throw new Error(`Server returned status ${res.status}. Check backend logs.`);
+        throw new Error('Shop registration is temporarily unavailable. Please try again shortly.');
       }
 
       if (!res.ok) throw new Error(data.error || 'Shop creation failed');
@@ -558,19 +570,20 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const handleAddProduct = async (e) => {
     e.preventDefault();
+    setProductsError(''); setProductNotice('');
 
     if (!subscriptionIsActive) {
-      alert('Your subscription has expired. Renew the plan to add products.');
+      setProductsError('Your subscription has expired. Renew the plan to add products.');
       return;
     }
 
     if (!shopData || !shopData.id) {
-      alert("Shop session error! Please Sign Out and Sign In again.");
+      setProductsError('Your shop session is unavailable. Sign out and sign in again.');
       return;
     }
 
     if (productsTotal >= maxProductsAllowed) {
-      alert(`Product limit reached! Your current plan allows maximum ${maxProductsAllowed} products.`);
+      setProductsError(`Product limit reached. Your current plan allows a maximum of ${maxProductsAllowed} products.`);
       return;
     }
 
@@ -587,17 +600,17 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       if (contentType && contentType.indexOf("application/json") !== -1) {
         data = await res.json();
       } else {
-        throw new Error(`Server returned non-JSON response: ${res.status}`);
+        throw new Error('The product service is temporarily unavailable. Please try again shortly.');
       }
 
       if (!res.ok) throw new Error(data.error || 'Failed to add product');
 
       await fetchProductsFromBackend(shopData.id);
       setNewProduct({ name: '', brand: '', description: '', price: '', image_url: '', availability_status: 'available' });
-      alert("Product added successfully!");
+      setProductNotice('Product added successfully.');
 
     } catch (err) {
-      alert(err.message);
+      setProductsError(err.message);
     } finally {
       setLoading(false);
     }
@@ -606,7 +619,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
   const handleUpdateProduct = async (e) => {
     e.preventDefault();
     if (!editingProduct || !shopData?.id) return;
-    if (!subscriptionIsActive) { alert('Your subscription has expired. Renew the plan to edit products.'); return; }
+    setProductsError(''); setProductNotice('');
+    if (!subscriptionIsActive) { setProductsError('Your subscription has expired. Renew the plan to edit products.'); return; }
 
     setLoading(true);
     try {
@@ -629,17 +643,17 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       if (contentType && contentType.indexOf("application/json") !== -1) {
         data = await res.json();
       } else {
-        throw new Error(`Server returned non-JSON response: ${res.status}`);
+        throw new Error('The product service is temporarily unavailable. Please try again shortly.');
       }
 
       if (!res.ok) throw new Error(data.error || 'Failed to update product');
 
-      alert("Product updated successfully!");
+      setProductNotice('Product updated successfully.');
       setEditingProduct(null);
       await fetchProductsFromBackend(shopData.id);
 
     } catch (err) {
-      alert(err.message);
+      setProductsError(err.message);
     } finally {
       setLoading(false);
     }
@@ -647,7 +661,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const handleQuickStockUpdate = async (product, availability_status) => {
     if (product.availability_status === availability_status) return;
-    if (!subscriptionIsActive) { alert('Your subscription has expired. Renew the plan to update stock.'); return; }
+    if (!subscriptionIsActive) { setProductsError('Your subscription has expired. Renew the plan to update stock.'); return; }
+    setProductsError(''); setProductNotice('');
     setUpdatingStockId(product.id);
     try {
       const response = await fetch(`${API_BASE_URL}/api/products/${product.id}/availability`, {
@@ -665,7 +680,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
         [availability_status]: Number(current[availability_status] || 0) + 1,
       }));
     } catch (error) {
-      alert(error.message);
+      setProductsError(error.message);
     } finally {
       setUpdatingStockId(null);
     }
@@ -746,7 +761,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const handleDeleteProduct = async (product) => {
     if (!shopData?.id || !window.confirm(`Delete “${product.name}”? This cannot be undone.`)) return;
-    if (!subscriptionIsActive) { alert('Your subscription has expired. Renew the plan to manage products.'); return; }
+    if (!subscriptionIsActive) { setProductsError('Your subscription has expired. Renew the plan to manage products.'); return; }
+    setProductsError(''); setProductNotice('');
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/products/${product.id}`, {
@@ -756,8 +772,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to delete product.');
       await fetchProductsFromBackend(shopData.id);
+      setProductNotice('Product deleted successfully.');
     } catch (error) {
-      alert(error.message);
+      setProductsError(error.message);
     } finally {
       setLoading(false);
     }
@@ -765,6 +782,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
   const openShopEditor = () => {
     setShopImageUploadMessage('');
+    setDashboardFeedback(null);
     setShopForm({
       city: shopData?.city || '',
       name: shopData?.name || shopData?.shop_name || '',
@@ -787,10 +805,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
     e.preventDefault();
     if (!shopData?.id) return;
     if (!shopForm.phone && !shopForm.whatsapp_number) {
-      alert('Add at least one customer contact number: Call or WhatsApp.');
+      setDashboardFeedback({ tone: 'error', message: 'Add at least one customer contact number: Call or WhatsApp.' });
       return;
     }
-    setLoading(true);
+    setLoading(true); setDashboardFeedback(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}`, {
         method: 'PUT',
@@ -808,8 +826,9 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
       localStorage.setItem('hyperlocal-session', JSON.stringify(updatedSession));
       onLoginSuccess?.(updatedSession);
       setEditingShop(false);
+      setDashboardFeedback({ tone: 'success', message: 'Shop details updated successfully.' });
     } catch (err) {
-      alert(err.message);
+      setDashboardFeedback({ tone: 'error', message: err.message });
     } finally {
       setLoading(false);
     }
@@ -916,6 +935,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 <input type="number" step="any" required placeholder="Shop latitude, e.g. 13.0827 *" value={regForm.latitude} onChange={(e) => setRegForm({ ...regForm, latitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
                 <input type="number" step="any" required placeholder="Shop longitude, e.g. 80.2707 *" value={regForm.longitude} onChange={(e) => setRegForm({ ...regForm, longitude: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white" />
               </div>
+              {registrationLocationMessage && <FeedbackBanner tone="warning">{registrationLocationMessage}</FeedbackBanner>}
             </div>
             
             <button type="submit" disabled={!phoneVerificationToken} className="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-40">
@@ -986,12 +1006,12 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 ['billing', 'Billing', CalendarDays],
                 ['notifications', `Notifications${shopNotifications.some((item) => !item.read_at) ? ` (${shopNotifications.filter((item) => !item.read_at).length})` : ''}`, Bell],
                 ['reports', 'Complaints', MessageSquareWarning],
-                ['security', 'Account security', KeyRound],
-              ] : [['billing', 'Renew subscription', CalendarDays]]).map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
+                ['profile', 'Profile & security', UserRound],
+              ] : [['billing', 'Renew subscription', CalendarDays], ['profile', 'Profile & security', UserRound]]).map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setDashboardSection(id)} aria-current={dashboardSection === id ? 'page' : undefined} className={
                 'flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition lg:w-full ' + (dashboardSection === id ? 'bg-emerald-700 text-white shadow-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800')
               }><Icon className="h-4 w-4 shrink-0" /><span className="whitespace-nowrap">{label}</span></button>)}
             </nav>
-            <div className="mt-5 hidden space-y-2 border-t border-slate-100 pt-4 lg:block">{subscriptionIsActive && <button type="button" onClick={openShopEditor} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Pencil className="h-4 w-4" />Edit shop details</button>}{typeof onLogout === 'function' && <button type="button" onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-rose-600 hover:bg-rose-50"><LogOut className="h-4 w-4" />Sign out</button>}</div>
+            <div className="mt-5 hidden space-y-2 border-t border-slate-100 pt-4 lg:block">{subscriptionIsActive && <button type="button" onClick={openShopEditor} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Pencil className="h-4 w-4" />Edit shop details</button>}</div>
           </div>
         </aside>
         <div className="min-w-0">
@@ -1034,18 +1054,10 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             <RefreshCw className={`w-4 h-4 ${fetchingProducts ? 'animate-spin text-emerald-400' : ''}`} />
             <span className="hidden sm:inline">Refresh</span>
           </button>}
-          {typeof onLogout === 'function' && (
-            <button 
-              onClick={onLogout} 
-              className="lg:hidden p-2 bg-rose-900/60 hover:bg-rose-900 text-rose-200 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Sign Out</span>
-            </button>
-          )}
         </div>
       </div>
+
+      {dashboardFeedback && <FeedbackBanner tone={dashboardFeedback.tone} className="mb-5">{dashboardFeedback.message}</FeedbackBanner>}
 
       {(dashboardSection === 'overview' || dashboardSection === 'catalog') && <div className={`grid grid-cols-2 gap-3 sm:grid-cols-4 ${dashboardSection === 'overview' ? 'mb-4' : 'mb-5'}`}>
         {[['Listed products', productsTotal, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { setDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
@@ -1094,8 +1106,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
 
       {dashboardSection === 'demand' && <section className="mb-6 rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm"><div><h2 className="text-xl font-black text-slate-900">Nearby customer demand</h2><p className="mt-1 text-sm text-slate-500">Product requests whose selected distance includes your shop. Updates automatically every 30 seconds.</p></div>{demandError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{demandError}</p>}{demandLoading && !customerDemand.length ? <p className="mt-5 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading customer demand…</p> : !customerDemand.length ? <p className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">No matching customer requests yet.</p> : <div className="mt-5 space-y-3">{customerDemand.map((request) => <article key={request.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold text-slate-900">{request.requested_product}</p><p className="mt-1 text-xs text-slate-500">{request.distance_km == null ? 'Location not supplied' : `${request.distance_km} km from your shop`}{request.radius_km ? ` · Customer selected ${request.radius_km} km` : ' · Any distance'}{request.phone_last_four ? ` · Contact ending ${request.phone_last_four}` : ''}</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase text-slate-600">{request.status}</span></div><time className="mt-3 block text-[11px] text-slate-400">Requested {new Date(request.created_at).toLocaleString('en-IN')}</time></article>)}</div>}</section>}
 
-      {dashboardSection === 'security' && <section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><PasswordChangeForm session={session} onChanged={onLogout} /><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ OTP required at account creation</li><li>✓ OTP required to change or reset a password</li><li>✓ Regular login uses phone and password</li><li>✓ All sessions revoked after a password change</li></ul></aside></section>}
-      {dashboardSection === 'security' && <div className="mb-5"><ChangePhoneForm session={session} currentPhone={session?.user?.phone} onChanged={onLogout} compact /></div>}
+      {dashboardSection === 'profile' && <><header className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Shop account</p><h2 className="mt-2 text-2xl font-black text-slate-900">Profile & security</h2><p className="mt-1 text-sm text-slate-500">Manage your appearance, login details, password and this account session.</p></header><ThemePreference theme={theme} onToggleTheme={onToggleTheme} className="mb-6" /><section className="mb-6 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><PasswordChangeForm session={session} onChanged={onLogout} /><aside className="h-fit rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6"><BadgeCheck className="h-7 w-7 text-emerald-700" /><h2 className="mt-3 text-lg font-black text-emerald-950">Account protection</h2><ul className="mt-4 space-y-3 text-sm text-emerald-900"><li>✓ OTP required at account creation</li><li>✓ OTP required to change or reset a password</li><li>✓ Regular login uses phone and password</li><li>✓ All sessions revoked after a password change</li></ul></aside></section><div className="mb-5 grid gap-5 lg:grid-cols-[1fr_0.8fr]"><ChangePhoneForm session={session} currentPhone={session?.user?.phone} onChanged={onLogout} compact /><section className="h-fit rounded-2xl border border-rose-200 bg-rose-50 p-5 sm:p-6"><LogOut className="h-6 w-6 text-rose-700" /><h2 className="mt-3 text-lg font-black text-rose-950">Sign out</h2><p className="mt-2 text-sm leading-6 text-rose-800">End this shop-owner session on this device.</p><button type="button" onClick={onLogout} className="mt-5 rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white hover:bg-rose-800">Sign out this device</button></section></div></>}
 
       {dashboardSection === 'offers' && <section className="mb-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-800"><Tag className="h-5 w-5 text-orange-600" /> Shop offers</h2><p className="mt-1 text-sm text-slate-600">Publish offers that customers can see from the Offers menu.</p></div><span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">{shopOffers.filter((offer) => offer.is_active).length} active</span></div>
@@ -1119,6 +1130,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 text-emerald-600" /> Edit shop details</h3><button onClick={() => setEditingShop(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button></div>
             <form onSubmit={handleUpdateShop} className="space-y-3">
+              {dashboardFeedback?.tone === 'error' && <FeedbackBanner>{dashboardFeedback.message}</FeedbackBanner>}
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center gap-4"><ShopImage shop={shopForm} className="h-24 w-24 shrink-0 rounded-2xl border border-slate-200 object-cover" /><div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-800">Shop image</p><p className="mt-1 text-xs leading-5 text-slate-500">JPG, PNG or WebP. The image is optimized before saving.</p><div className="mt-3 flex flex-wrap gap-2"><label className="cursor-pointer rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><Upload className="mr-1 inline h-3.5 w-3.5" />Choose image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleShopImageUpload} className="hidden" /></label>{shopForm.image_url && <button type="button" onClick={() => { setShopForm({ ...shopForm, image_url: '' }); setShopImageUploadMessage('Image removed. Save details to apply.'); }} className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700">Remove</button>}</div></div></div>{shopImageUploadMessage && <p className="mt-3 text-xs font-medium text-slate-600">{shopImageUploadMessage}</p>}</div>
               <input required value={shopForm.name} onChange={(e) => setShopForm({ ...shopForm, name: e.target.value })} placeholder="Shop name, e.g. Sri Murugan Stores" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
               <label className="block text-xs font-semibold text-slate-600">City (optional)<input type="text" maxLength={80} placeholder="City name, e.g. Chennai" value={shopForm.city} onChange={e => setShopForm({ ...shopForm, city: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /><span className="mt-1 block font-normal text-slate-400">Only the city is included in your shop share link.</span></label>
@@ -1190,7 +1202,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
               {newProduct.image_url && (
                 <div className="mt-2 text-center">
                   <p className="text-[10px] text-slate-500 mb-1">Image Preview:</p>
-                  <img src={newProduct.image_url} alt="Preview" className="w-16 h-16 object-cover mx-auto rounded-lg border border-slate-300" />
+                  <ProductImage product={newProduct} className="mx-auto h-16 w-16 rounded-lg border border-slate-300" />
                 </div>
               )}
             </div>
@@ -1210,29 +1222,19 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
           </div>
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="text-xs font-semibold text-slate-600">Stock filter <select value={stockFilter} onChange={event => { setStockFilter(event.target.value); setProductPage(1); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="all">All products</option>{AVAILABILITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span className="text-xs text-slate-500">{filteredProducts.length} matching products</span></div>
-          {productsError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{productsError}</p>}
-          {fetchingProducts && products.length === 0 ? <div role="status" className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500"><Loader2 className="h-5 w-5 animate-spin" />Loading products…</div> : products.length === 0 ? (
-            <div className="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-              <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm font-medium text-slate-500">No products added yet.</p>
-              <p className="text-xs text-slate-400 mt-1">Add your first product using the form on the left.</p>
-            </div>
+          {productsError && <FeedbackBanner className="mb-4">{productsError}</FeedbackBanner>}
+          {productNotice && <FeedbackBanner tone="success" className="mb-4">{productNotice}</FeedbackBanner>}
+          {fetchingProducts && products.length === 0 ? <LoadingState compact label="Loading products…" rows={3} /> : products.length === 0 ? (
+            <EmptyState compact icon={Package} title="No products added yet" description="Add your first product using the form on the left." />
           ) : filteredProducts.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">No products match “{productSearch}”.</div>
+            <EmptyState compact kind="search" title="No matching products" description={`No products match “${productSearch}” with the selected stock filter.`} onAction={() => { setProductSearch(''); setStockFilter('all'); }} actionLabel="Clear filters" />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {visibleProducts.map((p) => (
                 <div key={p.id} className="border border-slate-200 rounded-xl p-3 transition hover:border-emerald-300 bg-white shadow-2xs">
                   <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-hidden">
-                    <img 
-                      src={p.image_url && p.image_url.trim() !== '' ? p.image_url : productFallbackImage(p)}
-                      alt={p.name} 
-                      loading="lazy"
-                      decoding="async"
-                      className="w-16 h-16 object-cover rounded-lg bg-slate-100 border border-slate-100 shrink-0" 
-                      onError={(e) => { if (e.target.dataset.fallback) return; e.target.dataset.fallback = 'true'; e.target.src = productFallbackImage(p); }}
-                    />
+                    <ProductImage product={p} className="h-16 w-16 shrink-0 rounded-lg border border-slate-100" />
                     <div className="overflow-hidden">
                       <h4 className="font-bold text-sm text-slate-800 truncate">{p.name}</h4>
                       <p className="text-sm font-extrabold text-emerald-600 mt-0.5">₹{p.price}</p>
@@ -1242,7 +1244,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                   </div>
 
                   <div className="flex shrink-0">
-                    <button disabled={!subscriptionIsActive} onClick={() => setEditingProduct(p)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30" title="Edit Product"><Pencil className="w-4 h-4" /></button>
+                    <button disabled={!subscriptionIsActive} onClick={() => { setProductsError(''); setProductNotice(''); setEditingProduct(p); }} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30" title="Edit Product"><Pencil className="w-4 h-4" /></button>
                     <button onClick={() => handleDeleteProduct(p)} disabled={loading || !subscriptionIsActive} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-30" title="Delete Product"><Trash2 className="w-4 h-4" /></button>
                   </div>
                   </div>
@@ -1273,6 +1275,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
             </div>
 
             <form onSubmit={handleUpdateProduct} className="space-y-3">
+              {productsError && <FeedbackBanner>{productsError}</FeedbackBanner>}
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Product Name *</label>
                 <input 
@@ -1338,7 +1341,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout }) => {
                 {editingProduct.image_url && (
                   <div className="mt-2 text-center">
                     <p className="text-[10px] text-slate-500 mb-1">Image Preview:</p>
-                    <img src={editingProduct.image_url} alt="Preview" className="w-16 h-16 object-cover mx-auto rounded-lg border border-slate-300" />
+                    <ProductImage product={editingProduct} className="mx-auto h-16 w-16 rounded-lg border border-slate-300" />
                   </div>
                 )}
               </div>
