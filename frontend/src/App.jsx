@@ -93,12 +93,12 @@ export default function App() {
   }, [role, theme, visibleTheme]);
   useEffect(() => { if (role !== 'admin') trackPageVisit(activeTab); }, [activeTab, role]);
 
-  return <div className={`flex min-h-[100dvh] flex-col bg-transparent font-sans text-slate-800 ${discoveryShell ? 'pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-0' : ''}`}>
+  return <div className="flex min-h-[100dvh] flex-col bg-transparent font-sans text-slate-800">
     <Navbar activeTab={activeTab} setActiveTab={navigate} session={session} role={role} onCustomerAuth={() => requireCustomerLogin(null)} />
     <NetworkStatusBanner />
 
-    <div className={`flex min-w-0 flex-1 flex-col ${discoveryShell ? 'lg:pl-60' : ''}`}>
-      <main id="main-content" className="min-w-0 flex-grow py-3 sm:py-8">
+    <div className="flex min-w-0 flex-1 flex-col">
+      <main id="main-content" className="min-w-0 flex-grow py-3 sm:py-6 lg:py-8">
         {activeTab === 'shop-directory' && <ShopDirectory onBack={() => navigate(homeTab(session))} onOpenShop={openShop} />}
         {activeTab === 'explore' && discoveryShell && <NearbySearch session={session} onRequireLogin={() => requireCustomerLogin('explore')} onOpenShop={openShop} />}
         {activeTab === 'offers' && discoveryShell && <Offers session={session} onOpenShop={openShop} />}

@@ -92,7 +92,7 @@ export default function CustomerAssistant({ onOpenShop }) {
   };
 
   return <div className="mx-auto w-full max-w-5xl px-3 sm:px-6">
-    <section className="flex h-[calc(100dvh-13rem)] min-h-[500px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_50px_rgba(15,23,42,0.08)] md:h-[calc(100dvh-7.5rem)] md:min-h-[620px]">
+    <section className="flex h-[calc(100dvh-10rem)] min-h-[420px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_50px_rgba(15,23,42,0.08)] sm:min-h-[500px] lg:h-[calc(100dvh-7.5rem)] lg:min-h-[620px]">
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-100 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white"><Sparkles className="h-4 w-4" /></span>
