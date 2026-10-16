@@ -246,9 +246,16 @@ table thead {
 }
 
 .ui-footer {
-  background: #17191c !important;
-  border-top: 1px solid rgb(255 255 255 / 0.08) !important;
+  background: transparent !important;
   box-shadow: none !important;
+}
+
+.footer-skyline {
+  color: #17191c;
+  line-height: 0;
+  background: transparent;
+  margin-bottom: -1px;
+  overflow: hidden;
 }
 
 .ui-footer [class*='bg-white/'] {

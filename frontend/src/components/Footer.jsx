@@ -1,10 +1,12 @@
 import {
   ArrowUpRight,
   BadgeCheck,
-  Compass,
+  CreditCard,
+  LockKeyhole,
   Mail,
-  MapPin,
-  Navigation,
+  MapPinned,
+  Search,
+  ShieldCheck,
   Store,
 } from 'lucide-react';
 
@@ -13,81 +15,111 @@ function FooterLink({ children, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="group flex min-h-10 items-center gap-1.5 text-left text-sm text-slate-400 transition hover:text-emerald-300 focus-visible:outline focus-visible:outline-emerald-300"
+      className="group flex min-h-9 items-center gap-1.5 text-left text-sm text-slate-400 transition hover:text-emerald-300 focus-visible:outline focus-visible:outline-emerald-300"
     >
       <span className="min-w-0 break-words">{children}</span>
-      <ArrowUpRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-100" />
+      <ArrowUpRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100" />
     </button>
   );
+}
+
+function LocalSkyline() {
+  return (
+    <div className="footer-skyline" aria-hidden="true">
+      <svg viewBox="0 0 1440 180" preserveAspectRatio="xMidYMax slice" className="block h-32 w-full sm:h-40 lg:h-44">
+        <path d="M0 104C90 126 145 67 237 87c76 17 111 57 205 37 104-22 151-71 260-38 86 27 116 67 217 42 93-23 143-73 244-48 91 23 164 81 277 35v65H0z" fill="currentColor" />
+        <g fill="currentColor">
+          <path d="M21 88h13v28H21zm17-16h15v44H38zm20 9h10v35H58zm18-21h17v56H76zm22 13h10v43H98z" />
+          <path d="M164 80c0-9 7-16 16-16s16 7 16 16v34h-32z" />
+          <path d="M155 80h50l-7-13h-36z" />
+          <circle cx="259" cy="75" r="10" /><rect x="255" y="82" width="8" height="35" />
+          <circle cx="287" cy="91" r="8" /><rect x="284" y="96" width="6" height="28" />
+          <path d="M356 81h16v44h-16zm21-25h19v69h-19zm24 39h14v30h-14zm19-53h23v83h-23zm28 25h14v58h-14z" />
+          <path d="M525 68a16 16 0 1 1 32 0c0 13-16 33-16 33s-16-20-16-33zm13 32h6v23h-6z" />
+          <path d="M646 82h75v47h-75zM656 69h55l10 13h-75z" />
+          <path d="M658 91h14v11h-14zm22 0h14v11h-14zm22 0h10v11h-10zm-43 20h51v18h-51z" fill="#ffffff" opacity=".17" />
+          <circle cx="782" cy="78" r="11" /><rect x="778" y="86" width="8" height="43" />
+          <circle cx="817" cy="94" r="8" /><rect x="814" y="99" width="6" height="29" />
+          <path d="M900 72h15v61h-15zm20 20h11v41h-11zm16-37h22v78h-22zm27 14h14v64h-14zm19 31h14v33h-14z" />
+          <path d="M1070 95h92v40h-92zM1060 94l56-34 56 34z" />
+          <path d="M1083 105h16v14h-16zm27 0h16v14h-16zm27 0h16v14h-16z" fill="#ffffff" opacity=".17" />
+          <circle cx="1234" cy="77" r="12" /><rect x="1230" y="86" width="8" height="48" />
+          <circle cx="1271" cy="96" r="8" /><rect x="1268" y="101" width="6" height="31" />
+          <path d="M1350 76h16v61h-16zm21-18h21v79h-21zm26 31h12v48h-12zm17-43h19v91h-19z" />
+        </g>
+        <g fill="none" stroke="#ffffff" strokeWidth="3" opacity=".24">
+          <path d="M119 105h67" /><path d="M1091 127h53" />
+          <circle cx="864" cy="89" r="25" /><path d="M864 64v50M839 89h50M847 72l34 34M881 72l-34 34" />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function TrustItem({ icon: Icon, title, note }) {
+  return <div className="flex min-w-0 items-center gap-2.5"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/5 text-emerald-300"><Icon className="h-4 w-4" /></span><span><strong className="block text-xs font-bold text-slate-200">{title}</strong><span className="block text-[10px] text-slate-500">{note}</span></span></div>;
 }
 
 export default function Footer({ setActiveTab }) {
   const goTo = (tab) => () => { setActiveTab?.(tab); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   return (
-    <footer className="ui-footer relative mt-auto overflow-hidden bg-slate-950 text-slate-300">
-      <div className="relative mx-auto max-w-7xl px-3 py-8 text-left sm:px-6 sm:py-10 lg:py-12">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4 lg:gap-6">
-          <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
-            <button type="button" onClick={goTo('explore')} className="flex items-center gap-2.5 text-left">
-              <span className="rounded-xl bg-emerald-400 p-2 text-slate-950">
-                <Store className="h-5 w-5" />
-              </span>
-              <span className="text-xl font-black tracking-tight text-white">Nearbuy</span>
-            </button>
-            <p className="mt-5 max-w-sm text-sm leading-6 text-slate-400">
-              Find the product near you. Check availability, visit the shop, and buy directly—without waiting for delivery.
-            </p>
-            <div className="mt-6 flex flex-wrap justify-start gap-2 text-center text-[11px] font-bold text-slate-300">
-              <div className="w-[76px] rounded-xl bg-white/5 p-2.5"><MapPin className="mx-auto mb-1 h-4 w-4 text-emerald-300" />Nearby</div>
-              <div className="w-[76px] rounded-xl bg-white/5 p-2.5"><BadgeCheck className="mx-auto mb-1 h-4 w-4 text-emerald-300" />Verified</div>
-              <div className="w-[76px] rounded-xl bg-white/5 p-2.5"><Navigation className="mx-auto mb-1 h-4 w-4 text-emerald-300" />Direct</div>
-            </div>
+    <footer className="ui-footer relative mt-16 text-slate-300 sm:mt-20">
+      <LocalSkyline />
+      <div className="bg-[#17191c]">
+        <div className="mx-auto max-w-7xl px-5 pb-8 pt-4 text-left sm:px-8 sm:pb-10 lg:px-10 lg:pb-8">
+          <div className="grid gap-10 border-b border-white/10 pb-10 sm:grid-cols-2 lg:grid-cols-12 lg:gap-8">
+            <section className="sm:col-span-2 lg:col-span-4" aria-labelledby="footer-brand-title">
+              <button type="button" onClick={goTo('explore')} className="flex items-center gap-2.5 text-left">
+                <span className="rounded-xl bg-emerald-400 p-2 text-slate-950"><Store className="h-5 w-5" /></span>
+                <span id="footer-brand-title" className="text-xl font-black tracking-tight text-white">Nearbuy</span>
+              </button>
+              <p className="mt-5 max-w-sm text-sm leading-6 text-slate-400">Discover products available at nearby shops, confirm before visiting, and support local businesses directly.</p>
+              <button type="button" onClick={goTo('explore')} className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400"><Search className="h-4 w-4" />Discover nearby</button>
+            </section>
+
+            <section className="lg:col-span-2" aria-labelledby="footer-discover-title">
+              <h2 id="footer-discover-title" className="text-sm font-bold text-white">Discover</h2>
+              <div className="mt-4 space-y-1">
+                <FooterLink onClick={goTo('explore')}>Nearby products</FooterLink>
+                <FooterLink onClick={goTo('shop-directory')}>Local shops</FooterLink>
+                <FooterLink onClick={goTo('offers')}>Latest offers</FooterLink>
+                <FooterLink onClick={goTo('about')}>How it works</FooterLink>
+              </div>
+            </section>
+
+            <section className="lg:col-span-3" aria-labelledby="footer-business-title">
+              <h2 id="footer-business-title" className="text-sm font-bold text-white">For local businesses</h2>
+              <div className="mt-4 space-y-1">
+                <FooterLink onClick={goTo('my-shop')}>List your shop</FooterLink>
+                <FooterLink onClick={goTo('my-shop')}>Manage your catalog</FooterLink>
+                <FooterLink onClick={goTo('pricing')}>Pricing and plans</FooterLink>
+                <FooterLink onClick={goTo('report-issue')}>Business support</FooterLink>
+              </div>
+            </section>
+
+            <section className="lg:col-span-3" aria-labelledby="footer-contact-title">
+              <h2 id="footer-contact-title" className="text-sm font-bold text-white">Help and information</h2>
+              <div className="mt-4 space-y-1">
+                <a href="mailto:support@nearbuy.com" className="flex min-h-9 items-center gap-2 text-sm text-slate-400 transition hover:text-emerald-300"><Mail className="h-4 w-4 shrink-0" />support@nearbuy.com</a>
+                <FooterLink onClick={goTo('report-issue')}>Submit a complaint</FooterLink>
+                <FooterLink onClick={goTo('privacy')}>Privacy</FooterLink>
+                <FooterLink onClick={goTo('terms')}>Terms</FooterLink>
+              </div>
+              <p className="mt-5 flex items-start gap-2 text-xs leading-5 text-slate-500"><MapPinned className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />Serving local communities across India.</p>
+            </section>
           </div>
 
-          <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
-            <h3 className="text-sm font-bold text-white">Discover</h3>
-            <div className="mt-4 space-y-3">
-              <FooterLink onClick={goTo('explore')}>Discover nearby products</FooterLink>
-              <FooterLink onClick={goTo('shop-directory')}>Browse local shops</FooterLink>
-              <FooterLink onClick={goTo('offers')}>View local offers</FooterLink>
-              <FooterLink onClick={goTo('about')}>How Nearbuy works</FooterLink>
-            </div>
+          <div className="grid gap-6 border-b border-white/10 py-7 sm:grid-cols-2 lg:grid-cols-4">
+            <TrustItem icon={BadgeCheck} title="Verified shops" note="Clear trust indicators" />
+            <TrustItem icon={ShieldCheck} title="Direct connection" note="No marketplace middleman" />
+            <TrustItem icon={LockKeyhole} title="Secure accounts" note="Protected sign-in flows" />
+            <TrustItem icon={CreditCard} title="Flexible billing" note="UPI and card-ready plans" />
           </div>
 
-          <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
-            <h3 className="text-sm font-bold text-white">For businesses</h3>
-            <div className="mt-4 space-y-3">
-              <FooterLink onClick={goTo('my-shop')}>List or manage your shop</FooterLink>
-              <FooterLink onClick={goTo('pricing')}>Pricing &amp; plans</FooterLink>
-              <FooterLink onClick={goTo('report-issue')}>Business support</FooterLink>
-            </div>
-          </div>
-
-          <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
-            <h3 className="text-sm font-bold text-white">Support &amp; trust</h3>
-            <div className="mt-4 space-y-3 text-sm text-slate-400">
-              <a href="mailto:support@nearbuy.com" className="flex min-w-0 items-start gap-2 break-all transition hover:text-emerald-300"><Mail className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />support@nearbuy.com</a>
-              <FooterLink onClick={goTo('report-issue')}>Submit a complaint</FooterLink>
-              <FooterLink onClick={goTo('privacy')}>Privacy</FooterLink>
-              <FooterLink onClick={goTo('terms')}>Terms</FooterLink>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-12 flex flex-col items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-          <div className="flex items-center gap-3"><Compass className="h-5 w-5 shrink-0 text-emerald-300" /><p className="text-sm font-semibold text-white">Search. Confirm. Visit. Buy local.</p></div>
-          <p className="text-xs leading-5 text-slate-500 sm:max-w-sm sm:text-right">Location, availability and price are supplied by listed shops.</p>
-        </div>
-
-        <div className="my-6 border-t border-white/10 sm:my-8" />
-
-        <div className="flex flex-col items-start gap-4 text-xs text-slate-500 lg:flex-row lg:items-center lg:justify-between">
-          <p className="leading-5">© {new Date().getFullYear()} Nearbuy. Built for local commerce.</p>
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            <button type="button" onClick={goTo('about')} className="px-1 hover:text-slate-300">About</button>
-            <button type="button" onClick={goTo('privacy')} className="px-1 hover:text-slate-300">Privacy</button>
-            <button type="button" onClick={goTo('terms')} className="px-1 hover:text-slate-300">Terms</button>
+          <div className="flex flex-col items-start gap-4 pt-7 text-xs text-slate-500 lg:flex-row lg:items-center lg:justify-between">
+            <p>© {new Date().getFullYear()} Nearbuy. Built for local commerce.</p>
+            <p className="max-w-xl leading-5 lg:text-right">Availability, pricing, contact details and opening status are supplied by each listed shop. Confirm time-sensitive details before visiting.</p>
           </div>
         </div>
       </div>
