@@ -32,11 +32,12 @@ export default function CustomerAuth({ onLoginSuccess, onChooseShop, onBack }) {
 
   return <div className="mx-3 my-3 max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:mx-auto sm:my-10 sm:p-7">
     <button onClick={onBack} className="mb-5 flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800"><ArrowLeft className="h-3.5 w-3.5" /> Back to explore</button>
-    <h1 className="text-2xl font-bold text-slate-800">{mode === 'login' ? 'Sign in' : 'Create an account'}</h1>
-    <p className="mt-1 text-sm text-slate-500">Use your phone number and password to access your account.</p>
+    <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Customer account</p>
+    <h1 className="mt-2 text-2xl font-bold text-slate-800">{mode === 'login' ? 'Sign in to Nearbuy' : 'Choose your account type'}</h1>
+    <p className="mt-1 text-sm text-slate-500">Customers can save activity, submit reviews and manage rewards. Shop owners use the business workspace.</p>
     {error && <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
     {resetNotice && <p className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-700">{resetNotice}</p>}
-    {mode === 'register' && <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2"><button type="button" className="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-3 text-left" onClick={() => setMode('customer-register')}><span className="block text-sm font-bold text-emerald-800">Customer</span><span className="mt-1 block text-xs text-slate-500">Discover, review and save activity</span></button><button type="button" className="rounded-xl border border-slate-200 p-3 text-left hover:border-emerald-400" onClick={onChooseShop}><span className="block text-sm font-bold text-slate-800">Shop owner</span><span className="mt-1 block text-xs text-slate-500">List products with a subscription</span></button></div>}
+    {mode === 'register' && <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2"><button type="button" className="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-3 text-left" onClick={() => setMode('customer-register')}><span className="block text-sm font-bold text-emerald-800">Customer account</span><span className="mt-1 block text-xs text-slate-500">Discover, review and save activity</span></button><button type="button" className="rounded-xl border border-slate-200 p-3 text-left hover:border-emerald-400" onClick={onChooseShop}><span className="block text-sm font-bold text-slate-800">Business account</span><span className="mt-1 block text-xs text-slate-500">Open the shop-owner workspace</span></button></div>}
     {mode !== 'register' && <form onSubmit={submit} className="mt-5 space-y-4">
       {mode === 'customer-register' && <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Enter your full name, e.g. Priya Kumar" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />}
       <IndianPhoneInput value={form.phone} onChange={(phone) => { setForm({ ...form, phone }); setPhoneVerificationToken(''); }} label="Account mobile number" />
@@ -46,6 +47,6 @@ export default function CustomerAuth({ onLoginSuccess, onChooseShop, onBack }) {
       {mode === 'login' && <button type="button" onClick={() => { setError(''); setResetNotice(''); setMode('forgot'); }} className="-mt-1 text-left text-xs font-semibold text-emerald-700 hover:underline">Forgot password?</button>}
       <button disabled={loading || (mode === 'customer-register' && !phoneVerificationToken)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-60">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === 'login' ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{mode === 'login' ? 'Sign in' : 'Create customer account'}</button>
     </form>}
-    <button onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setResetNotice(''); setPhoneVerificationToken(''); }} className="mt-5 w-full text-xs font-semibold text-emerald-700 hover:underline">{mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button>
+    <button onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setResetNotice(''); setPhoneVerificationToken(''); }} className="mt-5 w-full text-xs font-semibold text-emerald-700 hover:underline">{mode === 'login' ? 'New customer or shop owner? Choose an account' : 'Already have a customer account? Sign in'}</button>
   </div>;
 }

@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, BadgeCheck, MapPin, Store } from 'lucide-react';
+import { ArrowUpRight, BadgeCheck, MapPin, Search, Store } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { requestError } from '../requestState.mjs';
 import { EmptyState, ErrorState, LoadingState } from './ui/StatePanel';
 
 export default function ShopDirectory({ onOpenShop, onBack }) {
   const [page, setPage] = useState(1);
+  const [query, setQuery] = useState('');
   return <section className="mx-auto max-w-6xl px-3 py-3 sm:px-6 sm:py-6">
-    <button type="button" onClick={onBack} className="mb-5 flex items-center gap-2 text-sm font-semibold text-emerald-700"><ArrowLeft className="h-4 w-4" />Back</button>
-    <h1 className="text-2xl font-extrabold text-slate-900">Browse local shop catalogs</h1>
-    <p className="mt-2 text-sm text-slate-500">Choose a shop to see its products and contact details.</p>
-    <DirectoryPage key={page} page={page} setPage={setPage} onOpenShop={onOpenShop} />
+    <header className="neo-panel rounded-3xl border p-5 sm:p-7"><p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Local directory</p><div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Browse local shops</h1><p className="mt-2 text-sm text-slate-500">Choose a shop to see its products, opening status and contact details.</p></div><button type="button" onClick={onBack} className="text-xs font-bold text-emerald-700">Back to discovery</button></div><label className="neo-inset mt-5 flex items-center gap-3 rounded-2xl px-4 py-3"><Search className="h-4 w-4 text-slate-400" /><span className="sr-only">Search shops on this page</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search shop, category or area" className="w-full border-0 bg-transparent p-0 text-sm shadow-none outline-none" /></label></header>
+    <DirectoryPage key={page} page={page} setPage={setPage} onOpenShop={onOpenShop} query={query} />
   </section>;
 }
 
-function DirectoryPage({ page, setPage, onOpenShop }) {
+function DirectoryPage({ page, setPage, onOpenShop, query }) {
   const [shops, setShops] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -36,9 +35,12 @@ function DirectoryPage({ page, setPage, onOpenShop }) {
   }, [page, retry]);
   if (loading) return <LoadingState label="Loading local shops…" className="mt-6" />;
   if (error) return <ErrorState error={error} onRetry={() => { setLoading(true); setRetry(value => value + 1); }} className="mt-6" />;
+  const term = query.trim().toLowerCase();
+  const visibleShops = term ? shops.filter((shop) => [shop.name, shop.category, shop.city, shop.address].some((value) => String(value || '').toLowerCase().includes(term))) : shops;
   return <>
     {!shops.length && <EmptyState title="No shops listed yet" description="Local shop catalogs will appear here after businesses publish them." className="mt-6" />}
-    <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{shops.map(shop => <button key={shop.id} type="button" onClick={() => onOpenShop(shop)} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 text-left transition hover:border-emerald-400 hover:shadow-md focus-visible:outline focus-visible:outline-emerald-500"><div className="flex items-start gap-3"><Store className="h-6 w-6 shrink-0 text-emerald-700" /><h2 className="min-w-0 flex-1 break-words text-lg font-bold text-slate-900">{shop.name}</h2>{shop.is_verified && <BadgeCheck aria-label="Verified shop" className="h-5 w-5 shrink-0 text-sky-600" />}</div><p className="mt-3 text-xs font-semibold text-slate-500">{shop.category}</p><p className="mt-2 flex items-start gap-2 text-sm text-slate-500"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /><span className="break-words">{shop.city || shop.address || 'Local shop'}</span></p><p className="mt-4 flex items-center justify-between text-sm font-bold text-emerald-700"><span>{shop.product_count || 0} products</span><span className="inline-flex items-center gap-1">View catalog<ArrowUpRight className="h-4 w-4" /></span></p></button>)}</div>
+    {shops.length > 0 && !visibleShops.length && <EmptyState kind="search" compact title="No shops match this search" description="Try another shop name, category or area on this page." className="mt-6" />}
+    <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleShops.map(shop => <button key={shop.id} type="button" onClick={() => onOpenShop(shop)} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 text-left transition hover:border-emerald-400 hover:shadow-md focus-visible:outline focus-visible:outline-emerald-500"><div className="flex items-start gap-3"><Store className="h-6 w-6 shrink-0 text-emerald-700" /><h2 className="min-w-0 flex-1 break-words text-lg font-bold text-slate-900">{shop.name}</h2>{shop.is_verified && <BadgeCheck aria-label="Verified shop" className="h-5 w-5 shrink-0 text-sky-600" />}</div><p className="mt-3 text-xs font-semibold text-slate-500">{shop.category}</p><p className="mt-2 flex items-start gap-2 text-sm text-slate-500"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /><span className="break-words">{shop.city || shop.address || 'Local shop'}</span></p><p className="mt-4 flex items-center justify-between text-sm font-bold text-emerald-700"><span>{shop.product_count || 0} products</span><span className="inline-flex items-center gap-1">View catalog<ArrowUpRight className="h-4 w-4" /></span></p></button>)}</div>
     {(page > 1 || hasMore) && <div className="mt-6 flex items-center justify-between"><button disabled={page === 1} onClick={() => setPage(page - 1)} className="rounded-xl border px-4 py-2 text-sm disabled:opacity-40">Previous</button><span className="text-sm text-slate-500">Page {page}</span><button disabled={!hasMore} onClick={() => setPage(page + 1)} className="rounded-xl border px-4 py-2 text-sm disabled:opacity-40">Next</button></div>}
   </>;
 }

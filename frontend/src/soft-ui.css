@@ -1,0 +1,144 @@
+/* Authoritative visual layer: restrained, accessible Soft UI / neumorphism. */
+:root {
+  --neo-canvas: #e9eef3;
+  --neo-surface: #e9eef3;
+  --neo-surface-raised: #eef3f7;
+  --neo-surface-inset: #e4e9ef;
+  --neo-text: #1f2937;
+  --neo-muted: #586779;
+  --neo-accent: #087f5b;
+  --neo-border: rgb(100 116 139 / 0.16);
+  --neo-highlight: rgb(255 255 255 / 0.88);
+  --neo-lowlight: rgb(148 163 184 / 0.46);
+  --neo-shadow-raised: -8px -8px 18px var(--neo-highlight), 8px 8px 18px var(--neo-lowlight);
+  --neo-shadow-raised-sm: -4px -4px 10px rgb(255 255 255 / 0.82), 4px 4px 10px rgb(148 163 184 / 0.38);
+  --neo-shadow-inset: inset 3px 3px 7px rgb(148 163 184 / 0.34), inset -3px -3px 7px rgb(255 255 255 / 0.78);
+  --neo-shadow-pressed: inset 2px 2px 5px rgb(148 163 184 / 0.34), inset -2px -2px 5px rgb(255 255 255 / 0.72);
+  --app-canvas: var(--neo-canvas);
+  --app-canvas-deep: #e5ebf0;
+}
+
+:root[data-theme='dark'] {
+  --neo-canvas: #121a27;
+  --neo-surface: #182231;
+  --neo-surface-raised: #1b2637;
+  --neo-surface-inset: #141d2a;
+  --neo-text: #eef4f8;
+  --neo-muted: #a8b4c3;
+  --neo-accent: #34d399;
+  --neo-border: rgb(148 163 184 / 0.16);
+  --neo-highlight: rgb(55 72 94 / 0.38);
+  --neo-lowlight: rgb(0 0 0 / 0.52);
+  --neo-shadow-raised: -7px -7px 16px var(--neo-highlight), 8px 8px 18px var(--neo-lowlight);
+  --neo-shadow-raised-sm: -4px -4px 9px rgb(55 72 94 / 0.32), 4px 4px 10px rgb(0 0 0 / 0.44);
+  --neo-shadow-inset: inset 3px 3px 7px rgb(0 0 0 / 0.46), inset -3px -3px 7px rgb(55 72 94 / 0.28);
+  --neo-shadow-pressed: inset 2px 2px 5px rgb(0 0 0 / 0.48), inset -2px -2px 5px rgb(55 72 94 / 0.25);
+  --app-canvas: var(--neo-canvas);
+  --app-canvas-deep: #101722;
+}
+
+html,
+body,
+#root { background-color: var(--neo-canvas) !important; }
+
+body,
+:root[data-theme='dark'] body {
+  color: var(--neo-text);
+  background-image: linear-gradient(145deg, var(--neo-canvas), var(--app-canvas-deep)) !important;
+  background-attachment: fixed;
+}
+
+.neo-navbar,
+.neo-panel,
+.neo-raised,
+article.bg-white,
+section.bg-white,
+form.bg-white,
+aside.bg-white,
+nav.bg-white,
+div.rounded-3xl.bg-white,
+div.rounded-2xl.bg-white {
+  background-color: var(--neo-surface) !important;
+  border-color: var(--neo-border) !important;
+  box-shadow: var(--neo-shadow-raised) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.neo-navbar { box-shadow: 0 8px 22px rgb(100 116 139 / 0.2), inset 0 -1px 0 var(--neo-highlight) !important; }
+
+.bg-white,
+[class*='bg-white/'] {
+  background-color: var(--neo-surface) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.bg-slate-50,
+.bg-slate-100,
+[class*='bg-slate-50/'],
+.neo-inset,
+thead,
+thead.bg-slate-50 { background-color: var(--neo-surface-inset) !important; }
+
+.neo-inset,
+thead,
+thead.bg-slate-50 {
+  border-color: var(--neo-border) !important;
+  box-shadow: var(--neo-shadow-inset) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']),
+select,
+textarea {
+  color: var(--neo-text);
+  background-color: var(--neo-surface-inset) !important;
+  border-color: transparent !important;
+  box-shadow: var(--neo-shadow-inset) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
+select:focus,
+textarea:focus {
+  background-color: var(--neo-surface) !important;
+  box-shadow: var(--neo-shadow-inset), 0 0 0 3px var(--focus-ring) !important;
+}
+
+.shadow-sm,
+.shadow-md,
+.shadow-lg,
+.shadow-xl,
+.shadow-2xl,
+.shadow-soft,
+.shadow-soft-sm,
+.neo-action,
+button[class*='bg-']:not([class*='bg-transparent']),
+a[class*='bg-']:not([class*='bg-transparent']) { box-shadow: var(--neo-shadow-raised-sm) !important; }
+
+button:not(:disabled):active,
+a[class*='rounded-']:active,
+button[aria-current='page'],
+button[aria-pressed='true'],
+button[role='switch'][aria-checked='true'] { box-shadow: var(--neo-shadow-pressed) !important; }
+
+.neo-footer {
+  background: #142132 !important;
+  border-top: 1px solid rgb(255 255 255 / 0.08) !important;
+  box-shadow: inset 0 12px 28px rgb(0 0 0 / 0.2), 0 -8px 24px rgb(100 116 139 / 0.16) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.neo-footer [class*='bg-white/'] {
+  background-color: rgb(255 255 255 / 0.045) !important;
+  border-color: rgb(255 255 255 / 0.07) !important;
+  box-shadow: inset 3px 3px 8px rgb(0 0 0 / 0.22), inset -2px -2px 6px rgb(255 255 255 / 0.035) !important;
+}
+
+@media (max-width: 640px) {
+  :root { --neo-shadow-raised: -5px -5px 12px var(--neo-highlight), 5px 5px 12px var(--neo-lowlight); }
+}

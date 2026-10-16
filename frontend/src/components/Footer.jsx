@@ -4,10 +4,7 @@ import {
   Compass,
   Mail,
   MapPin,
-  MessageCircle,
   Navigation,
-  Phone,
-  ShieldCheck,
   Store,
 } from 'lucide-react';
 
@@ -29,8 +26,6 @@ export default function Footer({ setActiveTab }) {
 
   return (
     <footer className="neo-footer relative mt-auto overflow-hidden bg-slate-950 text-slate-300">
-      <div className="pointer-events-none absolute -left-24 top-0 h-72 w-72 rounded-full bg-emerald-500/15 blur-3xl" />
-      <div className="pointer-events-none absolute right-0 top-20 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
       <div className="relative mx-auto max-w-7xl px-3 py-8 text-left sm:px-6 sm:py-10 lg:py-12">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4 lg:gap-6">
           <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
@@ -53,9 +48,9 @@ export default function Footer({ setActiveTab }) {
           <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
             <h3 className="text-sm font-bold text-white">Discover</h3>
             <div className="mt-4 space-y-3">
-              <FooterLink onClick={goTo('explore')}>Explore nearby products</FooterLink>
-              <FooterLink onClick={goTo('shop-directory')}>Browse local shop catalogs</FooterLink>
-              <FooterLink onClick={goTo('explore')}>Available products</FooterLink>
+              <FooterLink onClick={goTo('explore')}>Discover nearby products</FooterLink>
+              <FooterLink onClick={goTo('shop-directory')}>Browse local shops</FooterLink>
+              <FooterLink onClick={goTo('offers')}>View local offers</FooterLink>
               <FooterLink onClick={goTo('about')}>How Nearbuy works</FooterLink>
             </div>
           </div>
@@ -63,11 +58,9 @@ export default function Footer({ setActiveTab }) {
           <div className="min-w-0 flex-1 basis-0 rounded-2xl bg-white/[0.035] p-3 sm:p-5">
             <h3 className="text-sm font-bold text-white">For businesses</h3>
             <div className="mt-4 space-y-3">
-              <FooterLink onClick={goTo('my-shop')}>List your shop</FooterLink>
+              <FooterLink onClick={goTo('my-shop')}>List or manage your shop</FooterLink>
               <FooterLink onClick={goTo('pricing')}>Pricing &amp; plans</FooterLink>
-              <FooterLink onClick={goTo('my-shop')}>Manage product catalog</FooterLink>
-              <FooterLink onClick={goTo('my-shop')}>Update availability</FooterLink>
-              <FooterLink onClick={goTo('about')}>Grow local visibility</FooterLink>
+              <FooterLink onClick={goTo('report-issue')}>Business support</FooterLink>
             </div>
           </div>
 
@@ -75,9 +68,9 @@ export default function Footer({ setActiveTab }) {
             <h3 className="text-sm font-bold text-white">Support &amp; trust</h3>
             <div className="mt-4 space-y-3 text-sm text-slate-400">
               <a href="mailto:support@nearbuy.com" className="flex min-w-0 items-start gap-2 break-all transition hover:text-emerald-300"><Mail className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />support@nearbuy.com</a>
-              <span className="flex items-center gap-2"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />Contact shops directly</span>
-              <span className="flex items-center gap-2"><MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />WhatsApp availability checks</span>
-              <span className="flex items-center gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />Shop verification program</span>
+              <FooterLink onClick={goTo('report-issue')}>Submit a complaint</FooterLink>
+              <FooterLink onClick={goTo('privacy')}>Privacy</FooterLink>
+              <FooterLink onClick={goTo('terms')}>Terms</FooterLink>
             </div>
           </div>
         </div>
@@ -95,7 +88,6 @@ export default function Footer({ setActiveTab }) {
             <button type="button" onClick={goTo('about')} className="px-1 hover:text-slate-300">About</button>
             <button type="button" onClick={goTo('privacy')} className="px-1 hover:text-slate-300">Privacy</button>
             <button type="button" onClick={goTo('terms')} className="px-1 hover:text-slate-300">Terms</button>
-            <button type="button" onClick={goTo('report-issue')} className="px-1 hover:text-slate-300">Submit a complaint</button>
           </div>
         </div>
       </div>

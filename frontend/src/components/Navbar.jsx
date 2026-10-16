@@ -1,205 +1,94 @@
-import { useState } from 'react';
-import { Store, Compass, PlusCircle, Menu, X, User, BarChart3, LogIn, Tag, Sparkles, House, Search, BellRing, Building2, CircleUserRound } from 'lucide-react';
+import {
+  BadgePercent,
+  Bot,
+  Building2,
+  CircleUserRound,
+  Compass,
+  LogIn,
+  Search,
+  Store,
+  UserRoundCog,
+} from 'lucide-react';
+import { navigationItems } from '../navigation.mjs';
 
-const Navbar = ({ activeTab, setActiveTab, session, role, onCustomerAuth }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const homeTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'explore';
-  const signedInLabel = role === 'shop_owner'
-    ? session?.shop?.name || session?.shop?.shop_name || session?.user?.owner_name || session?.user?.name || 'My Shop'
-    : session?.user?.name || session?.user?.owner_name || 'User';
-  const accountTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'activity';
-  const hasCustomerDock = role === 'guest' || role === 'customer';
-  const mobileItems = [
-    { id: 'home', label: 'Home', icon: House, target: 'explore', matches: ['explore'] },
-    { id: 'search', label: 'Shop AI', icon: Search, target: 'assistant', matches: ['assistant'] },
-    { id: 'offers', label: 'Offers', icon: BellRing, target: 'offers', matches: ['offers'] },
-    { id: 'business', label: 'Business', icon: Building2, target: role === 'guest' ? 'my-shop' : 'shop-directory', matches: ['my-shop', 'shop-directory', 'shop-portfolio'] },
-    { id: 'profile', label: 'Profile', icon: CircleUserRound, target: role === 'guest' ? 'customer-auth' : 'activity', matches: ['customer-auth', 'activity'] },
-  ];
-  const navigateMobile = (target) => {
-    if (target === 'customer-auth') onCustomerAuth();
-    else setActiveTab(target);
-    setIsOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-  return (
-    <>
-    <nav className="neo-navbar sticky top-0 z-50 border-b border-white/70 bg-white/70 backdrop-blur-2xl backdrop-saturate-150">
-      <div className="mx-auto w-full max-w-[1600px] px-5 sm:px-8 lg:px-10">
-        <div className="flex items-center justify-between h-16">
-          
-          {/* App Logo & Name */}
-          <button
-            type="button"
-            aria-label="Go to home"
-            onClick={() => setActiveTab(homeTab)}
-            className="flex min-h-11 items-center gap-2.5 rounded-xl text-left transition hover:opacity-90"
-          >
-            <div className="rounded-xl border border-white/50 bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-700 p-2 text-white shadow-lg shadow-emerald-700/20">
-              <Store className="w-5 h-5" />
-            </div>
-            <span className="text-xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-600 to-teal-700 bg-clip-text text-transparent">
-              Nearbuy 
-            </span>
-          </button>
-
-          {/* Desktop Navigation Links */}
-          <div className={`${hasCustomerDock ? 'hidden' : 'hidden md:flex'} items-center gap-3`}>
-            {(role === 'guest' || role === 'customer') && <button
-              onClick={() => setActiveTab('explore')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${
-                activeTab === 'explore'
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-              }`}
-            >
-              <Compass className="w-4 h-4" />
-              Explore
-            </button>}
-
-            {(role === 'guest' || role === 'customer') && <button onClick={() => setActiveTab('assistant')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'assistant' ? 'border border-violet-700 bg-violet-700 text-white shadow-sm' : 'border border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:bg-violet-100'}`}><Sparkles className="h-4 w-4" />AI Assistant</button>}
-
-            {(role === 'guest' || role === 'customer') && <button onClick={() => setActiveTab('offers')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'offers' ? 'border border-orange-700 bg-orange-700 text-white shadow-sm' : 'border border-orange-200 bg-orange-50 text-orange-700 hover:border-orange-300 hover:bg-orange-100'}`}><Tag className="h-4 w-4" />Offers</button>}
-
-            {(role === 'guest' || role === 'shop_owner') && <button
-                onClick={() => setActiveTab('my-shop')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${
-                    activeTab === 'my-shop'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'bg-slate-900 text-white hover:bg-slate-800'
-                }`}
-                >
-              <PlusCircle className="w-4 h-4" />
-              My Shop
-            </button>}
-
-            {session?.user?.is_admin && (
-              <button
-                onClick={() => setActiveTab('demand')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${
-                  activeTab === 'demand'
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                Admin Dashboard
-              </button>
-            )}
-            <div className="h-6 w-px bg-slate-200 mx-1" />
-
-            {/* Shop owners sign in from the My Shop portal only. */}
-            {session?.token ? (
-              <button type="button" onClick={() => setActiveTab(accountTab)} className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition ${activeTab === accountTab ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                <User className="h-4 w-4 shrink-0 text-emerald-600" />
-                <span className="block max-w-32 truncate text-xs font-bold">{signedInLabel}</span>
-              </button>
-            ) : role === 'guest' ? <button onClick={onCustomerAuth} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"><LogIn className="w-3.5 h-3.5" />Sign in</button> : null}
-          </div>
-
-          {hasCustomerDock && <div className="hidden items-center gap-2 md:flex">
-            <div aria-label="Primary navigation" className="flex items-center rounded-[1.35rem] border border-white/15 bg-slate-950/90 p-1.5 shadow-[0_14px_35px_rgba(2,6,23,0.22)] backdrop-blur-2xl backdrop-saturate-150">
-              {mobileItems.map(({ id, label, icon: Icon, target, matches }) => {
-                const selected = matches.includes(activeTab);
-                return <button key={id} type="button" onClick={() => navigateMobile(target)} aria-current={selected ? 'page' : undefined} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-all duration-200 lg:px-4 ${selected ? 'bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-300 text-slate-950 shadow-[0_7px_20px_rgba(52,211,153,0.28)]' : 'text-slate-300 hover:bg-white/10 hover:text-white'}`}><Icon className="h-4 w-4" strokeWidth={selected ? 2.5 : 1.8} /><span>{label}</span></button>;
-              })}
-            </div>
-          </div>}
-
-          {/* Mobile Menu Toggle Button */}
-          <div className="md:hidden">
-            {!hasCustomerDock && <button
-              type="button"
-              aria-label={isOpen ? 'Close navigation menu' : 'Open navigation menu'}
-              aria-expanded={isOpen}
-              onClick={() => setIsOpen(!isOpen)}
-              className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 focus:outline-none"
-            >
-              {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>}
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile Menu Dropdown */}
-      {isOpen && !hasCustomerDock && (
-        <div className="md:hidden border-t border-slate-100 bg-slate-50 px-4 pt-3 pb-4 space-y-2">
-          {(role === 'guest' || role === 'customer') && <button
-            onClick={() => {
-              setActiveTab('explore');
-              setIsOpen(false);
-            }}
-            className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'explore'
-                ? 'bg-emerald-600 text-white'
-                : 'text-slate-700 hover:bg-slate-200/60'
-            }`}
-          >
-            <Compass className="w-4 h-4" />
-            Explore
-          </button>}
-
-          {(role === 'guest' || role === 'customer') && <button onClick={() => { setActiveTab('assistant'); setIsOpen(false); }} className={`flex w-full items-center gap-2.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${activeTab === 'assistant' ? 'bg-violet-700 text-white' : 'bg-violet-50 text-violet-700 hover:bg-violet-100'}`}><Sparkles className="h-4 w-4" />AI Assistant</button>}
-
-          {(role === 'guest' || role === 'customer') && <button onClick={() => { setActiveTab('offers'); setIsOpen(false); }} className={`flex w-full items-center gap-2.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${activeTab === 'offers' ? 'bg-orange-700 text-white' : 'bg-orange-50 text-orange-700 hover:bg-orange-100'}`}><Tag className="h-4 w-4" />Offers</button>}
-
-          {(role === 'guest' || role === 'shop_owner') && <button
-            onClick={() => {
-              setActiveTab('my-shop');
-              setIsOpen(false);
-            }}
-            className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'my-shop'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-slate-900 text-white'
-            }`}
-          >
-            <PlusCircle className="w-4 h-4" />
-            My Shop
-          </button>}
-
-          {session?.user?.is_admin && (
-            <button
-              onClick={() => {
-                setActiveTab('demand');
-                setIsOpen(false);
-              }}
-              className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition ${
-                activeTab === 'demand'
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-slate-700 hover:bg-slate-200/60'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" />
-              Admin Dashboard
-            </button>
-          )}
-          <div className="pt-2 border-t border-slate-200">
-            {session?.token ? (
-              <button type="button" onClick={() => { setActiveTab(accountTab); setIsOpen(false); }} className={`flex w-full min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left ${activeTab === accountTab ? 'bg-emerald-100 text-emerald-800' : 'bg-white text-slate-700'}`}>
-                <User className="h-4 w-4 shrink-0 text-emerald-600" />
-                <span className="block min-w-0 truncate text-xs font-bold">{signedInLabel}</span>
-              </button>
-            ) : role === 'guest' ? <button onClick={() => { onCustomerAuth(); setIsOpen(false); }} className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Sign in</button> : null}
-          </div>
-        </div>
-      )}
-
-    </nav>
-
-      {hasCustomerDock && <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[70] bg-gradient-to-t from-slate-950/20 via-slate-900/5 to-transparent px-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-5 md:hidden">
-        <div aria-label="Primary navigation" className="pointer-events-auto mx-auto flex h-[72px] max-w-md items-center justify-around rounded-[1.65rem] border border-white/90 bg-white/90 px-1 shadow-[0_18px_45px_rgba(15,23,42,0.28)] backdrop-blur-2xl backdrop-saturate-150 supports-[backdrop-filter]:bg-white/75">
-          {mobileItems.map(({ id, label, icon: Icon, target, matches }) => {
-            const selected = matches.includes(activeTab);
-            return <button key={id} type="button" onClick={() => navigateMobile(target)} aria-label={label} aria-current={selected ? 'page' : undefined} className={`group flex h-full min-w-0 w-1/5 flex-col items-center justify-center rounded-2xl text-center transition active:scale-95 ${selected ? 'text-emerald-800' : 'text-slate-500'}`}>
-              <span className={`flex items-center justify-center transition-all duration-200 ${selected ? 'h-10 w-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-[0_8px_18px_rgba(5,150,105,0.3)]' : 'h-9 w-9 rounded-xl group-hover:bg-white/60'}`}><Icon className={selected ? 'h-5 w-5' : 'h-[19px] w-[19px]'} strokeWidth={selected ? 2.5 : 1.8} /></span>
-              <span className={`mt-0.5 max-w-full truncate px-0.5 text-[10px] font-bold leading-3 ${selected ? 'text-emerald-800' : 'text-slate-600'}`}>{label}</span>
-            </button>;
-          })}
-        </div>
-      </div>}
-    </>
-  );
+const icons = {
+  discover: Compass,
+  shops: Building2,
+  offers: BadgePercent,
+  ask: Bot,
+  account: CircleUserRound,
 };
 
-export default Navbar;
+const pageNames = {
+  explore: 'Discover nearby',
+  'shop-directory': 'Local shops',
+  offers: 'Offers',
+  assistant: 'Ask Nearbuy',
+  'shop-portfolio': 'Shop profile',
+  'customer-auth': 'Your account',
+  activity: 'Your account',
+  'my-shop': 'Shop workspace',
+  demand: 'Administration',
+  pricing: 'Pricing',
+  about: 'About Nearbuy',
+  privacy: 'Privacy',
+  terms: 'Terms',
+  'report-issue': 'Support',
+};
+
+export default function Navbar({ activeTab, setActiveTab, session, role, onCustomerAuth }) {
+  const discoveryNavigation = role === 'guest' || role === 'customer';
+  const items = navigationItems(role);
+  const homeTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'explore';
+  const accountTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'activity';
+  const accountName = role === 'shop_owner'
+    ? session?.shop?.name || session?.shop?.shop_name || session?.user?.owner_name || 'My Shop'
+    : session?.user?.owner_name || session?.user?.name || (role === 'admin' ? 'Administrator' : 'Guest');
+
+  const go = (target) => {
+    if (target === 'customer-auth') onCustomerAuth();
+    else setActiveTab(target);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const NavButton = ({ item, compact = false }) => {
+    const Icon = icons[item.id];
+    const selected = item.matches.includes(activeTab);
+    return <button
+      type="button"
+      onClick={() => go(item.target)}
+      aria-current={selected ? 'page' : undefined}
+      className={`${compact ? 'flex h-full min-w-0 flex-1 flex-col justify-center gap-1 px-1 text-[10px]' : 'flex w-full items-center gap-3 px-4 py-3 text-sm'} rounded-2xl font-bold transition ${selected ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800'}`}
+    >
+      <Icon className={compact ? 'h-5 w-5' : 'h-[18px] w-[18px]'} aria-hidden="true" />
+      <span className={compact ? 'max-w-full truncate' : ''}>{compact ? item.label : item.longLabel || item.label}</span>
+    </button>;
+  };
+
+  return <>
+    <header className="neo-navbar sticky top-0 z-50 border-b border-white/70 bg-white/80">
+      <div className="mx-auto flex h-16 w-full max-w-[1800px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+        <button type="button" aria-label="Go to home" onClick={() => go(homeTab)} className="flex min-h-11 items-center gap-2.5 rounded-xl text-left">
+          <span className="rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 p-2 text-white shadow-soft-sm"><Store className="h-5 w-5" /></span>
+          <span><span className="block text-lg font-black tracking-tight text-slate-900">Nearbuy</span><span className="hidden text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:block">{pageNames[activeTab] || 'Local commerce'}</span></span>
+        </button>
+
+        <div className="flex items-center gap-2">
+          {activeTab !== 'explore' && discoveryNavigation && <button type="button" onClick={() => go('explore')} className="hidden min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-bold text-slate-600 hover:bg-slate-100 sm:flex"><Search className="h-4 w-4" />Search products</button>}
+          {session?.token ? <button type="button" onClick={() => go(accountTab)} className="flex min-h-11 max-w-48 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-left text-xs font-bold text-slate-700 shadow-soft-sm"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700">{role === 'admin' ? <UserRoundCog className="h-4 w-4" /> : <CircleUserRound className="h-4 w-4" />}</span><span className="hidden truncate sm:block">{accountName}</span></button>
+            : <button type="button" onClick={onCustomerAuth} className="flex min-h-11 items-center gap-2 rounded-xl bg-emerald-700 px-4 text-xs font-bold text-white shadow-soft-sm"><LogIn className="h-4 w-4" />Sign in</button>}
+        </div>
+      </div>
+    </header>
+
+    {discoveryNavigation && <aside className="neo-panel fixed bottom-5 left-4 top-20 z-40 hidden w-56 flex-col rounded-3xl border p-3 lg:flex" aria-label="Primary navigation">
+      <div className="px-3 pb-3 pt-2"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Explore Nearbuy</p><p className="mt-1 text-sm font-semibold text-slate-600">Everything local, one tap away.</p></div>
+      <nav className="space-y-1">{items.map((item) => <NavButton key={item.id} item={item} />)}</nav>
+      <div className="mt-auto rounded-2xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-700">Own a local shop?</p><button type="button" onClick={() => go('my-shop')} className="mt-2 flex w-full items-center gap-2 text-xs font-black text-emerald-700"><Store className="h-4 w-4" />List or manage it</button></div>
+    </aside>}
+
+    {discoveryNavigation && <nav className="neo-navbar fixed inset-x-2 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-[70] flex h-[72px] items-stretch rounded-[1.6rem] border p-1.5 lg:hidden" aria-label="Primary navigation">
+      {items.map((item) => <NavButton key={item.id} item={item} compact />)}
+    </nav>}
+  </>;
+}

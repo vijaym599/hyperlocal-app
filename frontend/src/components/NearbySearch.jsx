@@ -226,6 +226,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const [locationError, setLocationError] = useState(null);
   const [placeName, setPlaceName] = useState(initialCache?.location?.name || 'Current location');
   const [gettingLocation, setGettingLocation] = useState(initialCache?.location?.source !== 'manual');
+  const [resultsView, setResultsView] = useState('products');
   const [shopPage, setShopPage] = useState(1);
   const categoryRailRef = useRef(null);
 
@@ -766,10 +767,14 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       ) : !userLocation ? (
         <EmptyState title="Choose your location" description={locationError || 'Allow GPS access or choose an area to discover nearby products.'} onAction={getUserLocation} actionLabel="Try GPS again" />
       ) : searchError && processedProducts.length === 0 ? <ErrorState error={searchError} onRetry={() => fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)} /> : (
-        <div className="space-y-10">
+        <div className="space-y-6">
+          <div className="neo-inset sticky top-20 z-20 grid grid-cols-2 gap-2 rounded-2xl p-1.5" role="tablist" aria-label="Discovery results">
+            <button type="button" role="tab" aria-selected={resultsView === 'products'} onClick={() => setResultsView('products')} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${resultsView === 'products' ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600'}`}><Package className="mr-2 inline h-4 w-4" />Products <span className="ml-1 text-xs opacity-75">{processedProducts.length}</span></button>
+            <button type="button" role="tab" aria-selected={resultsView === 'shops'} onClick={() => setResultsView('shops')} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${resultsView === 'shops' ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600'}`}><Store className="mr-2 inline h-4 w-4" />Shops <span className="ml-1 text-xs opacity-75">{processedShops.length}</span></button>
+          </div>
           
           {/* ================= SECTION 1: PRODUCTS NEARBY ================= */}
-          <section>
+          {resultsView === 'products' && <section>
             <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-2">
               <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                 <Package className="w-5 h-5 text-emerald-600" />
@@ -877,10 +882,10 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                 <button onClick={() => changeProductPage(productPage + 1)} disabled={loading || !hasMore} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Next <ChevronRight className="h-3.5 w-3.5" /></button>
               </div>
             </div>}
-          </section>
+          </section>}
 
           {/* ================= SECTION 2: SHOPS NEARBY ================= */}
-          <section>
+          {resultsView === 'shops' && <section>
             <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-2">
               <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                 <Store className="w-5 h-5 text-emerald-600" />
@@ -952,7 +957,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
               </div>
             )}
             <Pagination page={currentShopPage} pageCount={shopPageCount} setPage={setShopPage} itemName="shops" />
-          </section>
+          </section>}
 
         </div>
       )}
