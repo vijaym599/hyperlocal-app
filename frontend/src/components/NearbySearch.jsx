@@ -768,7 +768,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
         <EmptyState title="Choose your location" description={locationError || 'Allow GPS access or choose an area to discover nearby products.'} onAction={getUserLocation} actionLabel="Try GPS again" />
       ) : searchError && processedProducts.length === 0 ? <ErrorState error={searchError} onRetry={() => fetchNearbyData(userLocation.lat, userLocation.lng, searchQuery, radiusKm, availableOnly ? 'available' : 'all', activeCategory, 1, userLocation)} /> : (
         <div className="space-y-6">
-          <div className="glass-control sticky top-[7.75rem] z-20 grid grid-cols-2 gap-2 rounded-2xl p-1.5 lg:top-20" role="tablist" aria-label="Discovery results">
+          <div className="neo-inset sticky top-[7.75rem] z-20 grid grid-cols-2 gap-2 rounded-2xl p-1.5 lg:top-20" role="tablist" aria-label="Discovery results">
             <button type="button" role="tab" aria-selected={resultsView === 'products'} onClick={() => setResultsView('products')} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${resultsView === 'products' ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600'}`}><Package className="mr-2 inline h-4 w-4" />Products <span className="ml-1 text-xs opacity-75">{processedProducts.length}</span></button>
             <button type="button" role="tab" aria-selected={resultsView === 'shops'} onClick={() => setResultsView('shops')} className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${resultsView === 'shops' ? 'bg-emerald-700 text-white shadow-soft-sm' : 'text-slate-600'}`}><Store className="mr-2 inline h-4 w-4" />Shops <span className="ml-1 text-xs opacity-75">{processedShops.length}</span></button>
           </div>
@@ -963,10 +963,10 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       )}
       {selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-0 sm:items-center sm:p-4">
-          <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5">
+          <div role="dialog" aria-modal="true" aria-label="Product details" className="max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5">
             <div className="flex items-start justify-between gap-4">
               <div><h2 className="text-xl font-bold text-slate-800">{selectedProduct.name}</h2><p className="mt-1 text-lg font-extrabold text-emerald-600">₹{selectedProduct.price}</p></div>
-              <button onClick={() => setSelectedProduct(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+              <button type="button" aria-label="Close product details" onClick={() => setSelectedProduct(null)} className="min-h-10 min-w-10 shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
             <ProductImage product={selectedProduct} className="mt-4 h-52 w-full rounded-xl" />
             <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${availabilityPresentation(selectedProduct.availability_status).className}`}>{availabilityPresentation(selectedProduct.availability_status).label}</span><RatingBadge rating={selectedProduct.product_average_rating} count={selectedProduct.product_review_count} label="Product rating" />{selectedProduct.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified shop</span>}</div>
@@ -989,10 +989,10 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       )}
       {reviewItem && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/60 p-0 sm:items-center sm:p-4">
-          <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5">
+          <div role="dialog" aria-modal="true" aria-label="Community reviews" className="max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div><p className="text-xs font-bold uppercase tracking-wide text-amber-600">Community ratings</p><h2 className="mt-1 text-xl font-bold text-slate-800">{reviewTarget === 'shop' ? reviewItem.name : reviewItem.name}</h2><p className="mt-1 text-sm text-slate-500">See what local customers think and share your experience.</p></div>
-              <button onClick={() => setReviewItem(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+              <button type="button" aria-label="Close reviews" onClick={() => setReviewItem(null)} className="min-h-10 min-w-10 shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
             <div className="mt-4 flex items-center gap-3 rounded-xl bg-amber-50 p-3"><Star className="h-7 w-7 fill-amber-400 text-amber-400" /><div><p className="text-lg font-extrabold text-slate-800">{reviewSummary?.average_rating || '0.0'} / 5</p><p className="text-xs text-slate-500">{reviewSummary?.review_count || 0} customer review{Number(reviewSummary?.review_count || 0) === 1 ? '' : 's'}</p></div></div>
             <form onSubmit={submitReview} className="mt-4 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-4">

@@ -1127,8 +1127,8 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
 
       {editingShop && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
-            <div className="mb-4 flex items-center justify-between"><h3 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 text-emerald-600" /> Edit shop details</h3><button onClick={() => setEditingShop(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button></div>
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-shop-title" className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-100 bg-white p-4 shadow-xl sm:p-6">
+            <div className="mb-4 flex items-center justify-between gap-3"><h3 id="edit-shop-title" className="flex min-w-0 items-center gap-2 text-lg font-bold text-slate-800"><Pencil className="h-4 w-4 shrink-0 text-emerald-600" /> Edit shop details</h3><button type="button" aria-label="Close shop editor" onClick={() => setEditingShop(false)} className="min-h-10 min-w-10 rounded-lg p-2 text-slate-500 hover:text-slate-700"><X className="h-5 w-5" /></button></div>
             <form onSubmit={handleUpdateShop} className="space-y-3">
               {dashboardFeedback?.tone === 'error' && <FeedbackBanner>{dashboardFeedback.message}</FeedbackBanner>}
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center gap-4"><ShopImage shop={shopForm} className="h-24 w-24 shrink-0 rounded-2xl border border-slate-200 object-cover" /><div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-800">Shop image</p><p className="mt-1 text-xs leading-5 text-slate-500">JPG, PNG or WebP. The image is optimized before saving.</p><div className="mt-3 flex flex-wrap gap-2"><label className="cursor-pointer rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><Upload className="mr-1 inline h-3.5 w-3.5" />Choose image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleShopImageUpload} className="hidden" /></label>{shopForm.image_url && <button type="button" onClick={() => { setShopForm({ ...shopForm, image_url: '' }); setShopImageUploadMessage('Image removed. Save details to apply.'); }} className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700">Remove</button>}</div></div></div>{shopImageUploadMessage && <p className="mt-3 text-xs font-medium text-slate-600">{shopImageUploadMessage}</p>}</div>
@@ -1261,12 +1261,14 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
       {/* EDIT PRODUCT MODAL POPUP */}
       {editingProduct && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md max-h-[90dvh] overflow-y-auto w-full p-6 shadow-xl border border-slate-100">
+          <div role="dialog" aria-modal="true" aria-labelledby="edit-product-title" className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-100 bg-white p-4 shadow-xl sm:p-6">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+              <h3 id="edit-product-title" className="flex items-center gap-2 text-lg font-bold text-slate-800">
                 <Pencil className="w-4 h-4 text-emerald-600" /> Edit Product
               </h3>
-              <button 
+              <button
+                type="button"
+                aria-label="Close product editor"
                 onClick={() => setEditingProduct(null)} 
                 className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
               >

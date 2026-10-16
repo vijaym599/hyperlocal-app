@@ -19,5 +19,5 @@ export default function NetworkStatusBanner() {
   }, []);
 
   if (online && !restored) return null;
-  return <div role="status" aria-live="polite" className={`sticky top-16 z-40 flex min-h-11 items-center justify-center gap-2 border-b px-4 py-2 text-center text-xs font-bold shadow-sm backdrop-blur-xl ${online ? 'border-emerald-200 bg-emerald-50/95 text-emerald-800' : 'border-amber-200 bg-amber-50/95 text-amber-900'}`}>{online ? <CheckCircle2 className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}{online ? 'Connection restored.' : 'You are offline. Some information may be unavailable.'}</div>;
+  return <div role="status" aria-live="polite" className={`sticky top-[7.25rem] z-40 flex min-h-11 items-center justify-center gap-2 border-b px-4 py-2 text-center text-xs font-bold shadow-sm lg:top-16 ${online ? 'border-emerald-200 bg-emerald-50/95 text-emerald-800' : 'border-amber-200 bg-amber-50/95 text-amber-900'}`}>{online ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <WifiOff className="h-4 w-4 shrink-0" />}{online ? 'Connection restored.' : 'You are offline. Some information may be unavailable.'}</div>;
 }

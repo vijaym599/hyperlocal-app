@@ -244,8 +244,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   }
 }
 
-/* Nearbuy Soft UI design tokens. Legacy glass aliases remain available so older
-   component utilities inherit the same centralized visual contract. */
+/* Nearbuy base design tokens. The final visual contract is defined in
+   neumorphic-ui.css; aliases here keep older component utilities compatible. */
 :root {
   color-scheme: light;
   --neo-canvas: #e9eef3;
@@ -672,9 +672,8 @@ tbody tr:hover {
   }
 }
 
-/* Glassmorphism layer -------------------------------------------------------
-   Keep the compatibility class names introduced by the earlier Soft UI pass,
-   but route every shared surface through one translucent glass system. */
+/* Legacy visual compatibility layer. Authoritative Neumorphism overrides live
+   in neumorphic-ui.css and are imported after this base stylesheet. */
 :root {
   --glass-canvas: #edf7f5;
   --glass-canvas-deep: #e7eefc;
