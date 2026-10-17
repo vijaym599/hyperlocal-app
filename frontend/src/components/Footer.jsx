@@ -15,7 +15,7 @@ function FooterLink({ children, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="group flex min-h-9 items-center gap-1.5 text-left text-sm text-slate-400 transition hover:text-emerald-300 focus-visible:outline focus-visible:outline-emerald-300"
+      className="footer-link group flex min-h-9 items-center gap-1.5 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4"
     >
       <span className="min-w-0 break-words">{children}</span>
       <ArrowUpRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100" />
@@ -57,29 +57,32 @@ function LocalSkyline() {
 }
 
 function TrustItem({ icon: Icon, title, note }) {
-  return <div className="flex min-w-0 items-center gap-2.5"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/5 text-emerald-300"><Icon className="h-4 w-4" /></span><span><strong className="block text-xs font-bold text-slate-200">{title}</strong><span className="block text-[10px] text-slate-500">{note}</span></span></div>;
+  return <div className="flex min-w-0 items-center gap-3"><span className="footer-trust-icon grid h-10 w-10 shrink-0 place-items-center rounded-full"><Icon className="h-4 w-4" /></span><span><strong className="block text-xs font-bold text-white">{title}</strong><span className="footer-muted mt-0.5 block text-[11px] leading-4">{note}</span></span></div>;
 }
 
 export default function Footer({ setActiveTab }) {
   const goTo = (tab) => () => { setActiveTab?.(tab); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   return (
-    <footer className="ui-footer relative mt-16 text-slate-300 sm:mt-20">
+    <footer className="ui-footer relative mt-16 sm:mt-20">
       <LocalSkyline />
-      <div className="bg-[#17191c]">
-        <div className="mx-auto max-w-7xl px-5 pb-8 pt-4 text-left sm:px-8 sm:pb-10 lg:px-10 lg:pb-8">
-          <div className="grid gap-10 border-b border-white/10 pb-10 sm:grid-cols-2 lg:grid-cols-12 lg:gap-8">
+      <div className="footer-surface">
+        <div className="mx-auto max-w-7xl px-5 pb-8 pt-5 text-left sm:px-8 sm:pb-10 sm:pt-7 lg:px-10 lg:pb-8">
+          <div className="grid gap-x-8 gap-y-10 border-b border-white/15 pb-10 sm:grid-cols-2 lg:grid-cols-12 lg:pb-12">
             <section className="sm:col-span-2 lg:col-span-4" aria-labelledby="footer-brand-title">
-              <button type="button" onClick={goTo('explore')} className="flex items-center gap-2.5 text-left">
-                <span className="rounded-xl bg-emerald-400 p-2 text-slate-950"><Store className="h-5 w-5" /></span>
-                <span id="footer-brand-title" className="text-xl font-black tracking-tight text-white">Nearbuy</span>
+              <button type="button" onClick={goTo('explore')} className="group flex items-center gap-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">
+                <span className="footer-brand-mark grid h-11 w-11 place-items-center rounded-2xl"><Store className="h-5 w-5" /></span>
+                <span>
+                  <span id="footer-brand-title" className="block text-xl font-black tracking-tight text-white">Nearbuy</span>
+                  <span className="footer-eyebrow block text-[10px] font-bold uppercase tracking-[0.18em]">Shop local. Find nearby.</span>
+                </span>
               </button>
-              <p className="mt-5 max-w-sm text-sm leading-6 text-slate-400">Discover products available at nearby shops, confirm before visiting, and support local businesses directly.</p>
-              <button type="button" onClick={goTo('explore')} className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400"><Search className="h-4 w-4" />Discover nearby</button>
+              <p className="footer-copy mt-5 max-w-sm text-sm leading-6">Discover products available at nearby shops, confirm before visiting, and support local businesses directly.</p>
+              <button type="button" onClick={goTo('explore')} className="footer-primary-action mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"><Search className="h-4 w-4" />Discover nearby</button>
             </section>
 
             <section className="lg:col-span-2" aria-labelledby="footer-discover-title">
-              <h2 id="footer-discover-title" className="text-sm font-bold text-white">Discover</h2>
+              <h2 id="footer-discover-title" className="footer-heading text-sm font-bold text-white">Discover</h2>
               <div className="mt-4 space-y-1">
                 <FooterLink onClick={goTo('explore')}>Nearby products</FooterLink>
                 <FooterLink onClick={goTo('shop-directory')}>Local shops</FooterLink>
@@ -89,7 +92,7 @@ export default function Footer({ setActiveTab }) {
             </section>
 
             <section className="lg:col-span-3" aria-labelledby="footer-business-title">
-              <h2 id="footer-business-title" className="text-sm font-bold text-white">For local businesses</h2>
+              <h2 id="footer-business-title" className="footer-heading text-sm font-bold text-white">For local businesses</h2>
               <div className="mt-4 space-y-1">
                 <FooterLink onClick={goTo('my-shop')}>List your shop</FooterLink>
                 <FooterLink onClick={goTo('my-shop')}>Manage your catalog</FooterLink>
@@ -99,26 +102,26 @@ export default function Footer({ setActiveTab }) {
             </section>
 
             <section className="lg:col-span-3" aria-labelledby="footer-contact-title">
-              <h2 id="footer-contact-title" className="text-sm font-bold text-white">Help and information</h2>
+              <h2 id="footer-contact-title" className="footer-heading text-sm font-bold text-white">Help and information</h2>
               <div className="mt-4 space-y-1">
-                <a href="mailto:support@nearbuy.com" className="flex min-h-9 items-center gap-2 text-sm text-slate-400 transition hover:text-emerald-300"><Mail className="h-4 w-4 shrink-0" />support@nearbuy.com</a>
+                <a href="mailto:support@nearbuy.com" className="footer-link flex min-h-9 items-center gap-2 text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4"><Mail className="h-4 w-4 shrink-0" />support@nearbuy.com</a>
                 <FooterLink onClick={goTo('report-issue')}>Submit a complaint</FooterLink>
                 <FooterLink onClick={goTo('privacy')}>Privacy</FooterLink>
                 <FooterLink onClick={goTo('terms')}>Terms</FooterLink>
               </div>
-              <p className="mt-5 flex items-start gap-2 text-xs leading-5 text-slate-500"><MapPinned className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />Serving local communities across India.</p>
+              <p className="footer-muted mt-5 flex items-start gap-2 text-xs leading-5"><MapPinned className="footer-accent mt-0.5 h-4 w-4 shrink-0" />Serving local communities across India.</p>
             </section>
           </div>
 
-          <div className="grid gap-6 border-b border-white/10 py-7 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-6 border-b border-white/15 py-7 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
             <TrustItem icon={BadgeCheck} title="Verified shops" note="Clear trust indicators" />
             <TrustItem icon={ShieldCheck} title="Direct connection" note="No marketplace middleman" />
             <TrustItem icon={LockKeyhole} title="Secure accounts" note="Protected sign-in flows" />
             <TrustItem icon={CreditCard} title="Flexible billing" note="UPI and card-ready plans" />
           </div>
 
-          <div className="flex flex-col items-start gap-4 pt-7 text-xs text-slate-500 lg:flex-row lg:items-center lg:justify-between">
-            <p>© {new Date().getFullYear()} Nearbuy. Built for local commerce.</p>
+          <div className="footer-legal flex flex-col items-start gap-4 pt-7 text-xs lg:flex-row lg:items-center lg:justify-between">
+            <p>&copy; {new Date().getFullYear()} Nearbuy. Built for local commerce.</p>
             <p className="max-w-xl leading-5 lg:text-right">Availability, pricing, contact details and opening status are supplied by each listed shop. Confirm time-sensitive details before visiting.</p>
           </div>
         </div>

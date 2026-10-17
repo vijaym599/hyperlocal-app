@@ -587,7 +587,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
 
   return (
     <div className="mx-auto min-h-screen w-full max-w-[1600px] px-3 pb-8 font-sans sm:px-8 sm:pb-10 lg:px-10">
-      <section className="nearby-reveal relative mb-4 overflow-hidden rounded-3xl bg-slate-950 px-3 py-4 text-white shadow-2xl shadow-slate-900/20 sm:mb-6 sm:px-10 sm:py-10">
+      <section className="nearby-hero nearby-reveal relative mb-4 overflow-hidden rounded-3xl bg-slate-950 px-3 py-4 text-white shadow-2xl shadow-slate-900/20 sm:mb-6 sm:px-10 sm:py-10">
         <div className="nearby-hero-orb absolute -right-20 -top-24 h-64 w-64 rounded-full bg-emerald-400/25 blur-3xl" />
         <div className="nearby-hero-orb nearby-hero-orb-delayed absolute -bottom-28 left-1/3 h-52 w-52 rounded-full bg-cyan-400/15 blur-3xl" />
         <div className="relative grid items-center gap-3 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(420px,520px)] lg:gap-x-12 lg:gap-y-3">
@@ -627,9 +627,9 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
             </div>}
           </div>
 
-        <div className="relative rounded-2xl border border-white/15 bg-white/[0.09] p-2 shadow-xl backdrop-blur-xl">
-          <div className="flex items-center gap-2">
-            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-white px-3 py-2.5 text-slate-800 shadow-sm">
+        <div className="relative rounded-2xl border border-white/15 bg-white/[0.09] p-2 shadow-xl backdrop-blur-xl sm:p-3">
+          <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(0,1fr)_auto_minmax(148px,auto)]">
+            <label className="nearby-hero-control col-span-2 flex h-12 min-w-0 items-center gap-2 rounded-xl bg-white px-3.5 text-slate-800 shadow-sm xl:col-span-1">
               <Search className="h-4 w-4 shrink-0 text-emerald-600" />
               <span className="sr-only">Search products or shops nearby</span>
               <input
@@ -639,39 +639,27 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onFocus={() => setShowSuggestions(true)}
                 onBlur={() => window.setTimeout(() => setShowSuggestions(false), 150)}
-                className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none placeholder:text-slate-400"
+                className="ui-embedded-control nearby-hero-search-input min-w-0 flex-1 text-sm font-semibold outline-none"
               />
             </label>
-            <label className={`flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 text-xs font-bold transition ${availableOnly ? 'bg-emerald-400 text-emerald-950' : 'bg-white/10 text-slate-200 hover:bg-white/15'}`}>
-              <input type="checkbox" checked={availableOnly} onChange={(event) => setAvailableOnly(event.target.checked)} className="sr-only" />
-              <span className={`h-2 w-2 rounded-full ${availableOnly ? 'bg-emerald-900' : 'bg-slate-400'}`} />
-              Available
-            </label>
-            <label className="hidden h-10 shrink-0 items-center gap-2 rounded-xl bg-white/10 px-3 text-xs font-bold text-slate-200 sm:flex">
-              <LocateFixed className="h-4 w-4 text-emerald-300" />
-              <span className="sr-only">Search distance</span>
-              <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="cursor-pointer bg-transparent pr-1 text-xs font-bold text-white outline-none [&>option]:text-slate-900">
-                <option value="">Global (5000 km)</option>
-                <option value="2">Within 2 km</option>
-                <option value="5">Within 5 km</option>
-                <option value="10">Within 10 km</option>
-                <option value="20">Within 20 km</option>
-                <option value="50">Within 50 km</option>
-              </select>
-            </label>
+              <label className={`nearby-hero-control flex h-12 min-w-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition ${availableOnly ? 'border-emerald-300 bg-emerald-400 text-emerald-950' : 'border-white/10 bg-white/10 text-slate-100 hover:bg-white/15'}`}>
+                <input type="checkbox" checked={availableOnly} onChange={(event) => setAvailableOnly(event.target.checked)} className="sr-only" />
+                <span className={`h-2 w-2 rounded-full ${availableOnly ? 'bg-emerald-900' : 'bg-slate-300'}`} />
+                Available only
+              </label>
+              <label className="nearby-hero-control flex h-12 min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-xs font-bold text-slate-100">
+                <LocateFixed className="h-4 w-4 shrink-0 text-emerald-300" />
+                <span className="sr-only">Search distance</span>
+                <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="ui-embedded-control nearby-hero-distance-select min-w-0 flex-1 cursor-pointer text-xs font-bold outline-none">
+                  <option value="">Max</option>
+                  <option value="2">Within 2 km</option>
+                  <option value="5">Within 5 km</option>
+                  <option value="10">Within 10 km</option>
+                  <option value="20">Within 20 km</option>
+                  <option value="50">Within 50 km</option>
+                </select>
+              </label>
           </div>
-          <label className="mt-2 flex h-9 w-full items-center gap-2 rounded-xl bg-white/10 px-3 text-xs font-bold text-slate-200 sm:hidden">
-            <LocateFixed className="h-4 w-4 shrink-0 text-emerald-300" />
-            <span>Distance</span>
-            <select value={radiusKm} onChange={(event) => setRadiusKm(event.target.value)} className="min-w-0 flex-1 cursor-pointer bg-transparent text-right text-xs font-bold text-white outline-none [&>option]:text-slate-900">
-              <option value="">Global (5000 km)</option>
-              <option value="2">Within 2 km</option>
-              <option value="5">Within 5 km</option>
-              <option value="10">Within 10 km</option>
-              <option value="20">Within 20 km</option>
-              <option value="50">Within 50 km</option>
-            </select>
-          </label>
           {showSuggestions && searchQuery.trim().length >= 2 && suggestions.length > 0 && <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-xl bg-white p-1 text-slate-800 shadow-lg">
             {suggestions.map((suggestion) => <button key={`${suggestion.name}-${suggestion.brand || ''}`} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setSearchQuery(suggestion.name); setShowSuggestions(false); }} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-xs hover:bg-emerald-50"><span className="truncate font-semibold">{suggestion.name}{suggestion.brand ? ` · ${suggestion.brand}` : ''}</span><span className="shrink-0 text-emerald-700">{formatDistanceText(Number(suggestion.distance_km))}</span></button>)}
           </div>}
