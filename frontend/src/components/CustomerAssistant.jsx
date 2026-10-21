@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, ChevronDown, LocateFixed, MapPin, Send, ShieldCheck, Sparkles, Store, Loader2, Search } from 'lucide-react';
+import { Bot, ChevronDown, LocateFixed, MapPin, MessageCircle, Phone, Send, ShieldCheck, Sparkles, Store, Loader2, Search } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import ProductImage from './ProductImage';
 
@@ -17,6 +17,21 @@ const welcome = {
 };
 
 const formatPrice = (value) => Number(value || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
+const stockLabel = (status) => status === 'available' ? 'Confirmed available' : status === 'low_stock' ? 'Confirmed low stock' : 'Check with shop';
+const confirmationAge = (value, stale = false) => {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return null;
+  const hours = Math.max(0, Math.floor((Date.now() - time) / 3600000));
+  const age = hours < 1 ? 'just now' : hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+  return stale ? `Last confirmed ${age}` : `Confirmed ${age}`;
+};
+
+const checkAvailability = (product) => {
+  const whatsapp = String(product.shop_whatsapp_number || '').replace(/\D/g, '');
+  const phone = String(product.shop_phone || '').replace(/[^+\d]/g, '');
+  if (whatsapp) window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(`Hi, is ${product.name} available at ${product.shop_name || 'your shop'}?`)}`, '_blank', 'noopener,noreferrer');
+  else if (phone) window.open(`tel:${phone}`, '_self');
+};
 
 export default function CustomerAssistant({ onOpenShop }) {
   const [messages, setMessages] = useState([welcome]);
@@ -118,7 +133,7 @@ export default function CustomerAssistant({ onOpenShop }) {
             {message.role === 'assistant' && <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"><Sparkles className="h-3.5 w-3.5" /></span>}
             <div className={message.role === 'user' ? 'max-w-[85%] sm:max-w-xl' : 'min-w-0 max-w-[calc(100%-2.75rem)] flex-1'}>
               <div className={`text-left text-sm leading-6 ${message.role === 'user' ? 'rounded-3xl rounded-br-lg bg-slate-100 px-4 py-2.5 text-slate-900' : message.failed ? 'rounded-xl bg-rose-50 px-3 py-2 text-rose-700' : 'py-1 text-slate-700'}`}>{message.text}</div>
-              {message.products?.length > 0 && <><div className="mt-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-400"><span className={`h-1.5 w-1.5 rounded-full ${message.matchType === 'exact' ? 'bg-emerald-500' : 'bg-amber-500'}`} />{message.matchType === 'similar' ? 'Closest matches' : message.matchType === 'related' ? 'Related products' : 'Best matches'}</div><div className="mt-2 grid gap-3 sm:grid-cols-2">{message.products.map((product) => <article key={product.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex gap-3 p-3"><ProductImage product={product} className="h-20 w-20 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-sm font-black text-slate-900">{product.name}</h3><p className="mt-0.5 truncate text-[11px] font-semibold text-emerald-700">{product.shop_name}</p></div><p className="shrink-0 text-xs font-black text-slate-900">{formatPrice(product.price)}</p></div><div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold"><span className={`rounded-full px-2 py-1 ${product.availability_status === 'available' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{product.availability_status === 'available' ? 'Available' : 'Low stock'}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{Number(product.distance_km).toFixed(1)} km</span></div></div></div><button type="button" onClick={() => onOpenShop?.({ id: product.shop_id, name: product.shop_name, address: product.address, image_url: product.shop_image_url })} className="flex w-full items-center justify-center gap-2 border-t border-slate-100 px-3 py-2.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50"><Store className="h-3.5 w-3.5" />View shop</button></article>)}</div></>}
+              {message.products?.length > 0 && <><div className="mt-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-400"><span className={`h-1.5 w-1.5 rounded-full ${message.matchType === 'exact' ? 'bg-emerald-500' : 'bg-amber-500'}`} />{message.matchType === 'similar' ? 'Closest matches' : message.matchType === 'related' ? 'Related products' : 'Best matches'}</div><div className="mt-2 grid gap-3 sm:grid-cols-2">{message.products.map((product) => <article key={product.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex gap-3 p-3"><ProductImage product={product} className="h-20 w-20 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-sm font-black text-slate-900">{product.name}</h3><p className="mt-0.5 truncate text-[11px] font-semibold text-emerald-700">{product.shop_name}</p></div><p className="shrink-0 text-xs font-black text-slate-900">{formatPrice(product.price)}</p></div><div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold"><span className={`rounded-full px-2 py-1 ${product.availability_status === 'available' ? 'bg-emerald-100 text-emerald-800' : product.availability_status === 'low_stock' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}`}>{stockLabel(product.availability_status)}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{Number(product.distance_km).toFixed(1)} km</span></div>{confirmationAge(product.availability_updated_at, product.availability_status === 'unconfirmed') && <p className="mt-1 text-[9px] text-slate-400">{confirmationAge(product.availability_updated_at, product.availability_status === 'unconfirmed')}</p>}</div></div><div className="grid grid-cols-2 border-t border-slate-100"><button type="button" onClick={() => onOpenShop?.({ id: product.shop_id, name: product.shop_name, address: product.address, image_url: product.shop_image_url })} className="flex items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50"><Store className="h-3.5 w-3.5" />View shop</button>{(product.shop_whatsapp_number || product.shop_phone) && <button type="button" onClick={() => checkAvailability(product)} className="flex items-center justify-center gap-1.5 border-l border-slate-100 bg-emerald-50 px-2 py-2.5 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100">{product.shop_whatsapp_number ? <MessageCircle className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}Check stock</button>}</div></article>)}</div></>}
             </div>
           </div>)}
           {busy && <div aria-live="polite" className="mb-7 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-white"><Sparkles className="h-3.5 w-3.5" /></span><div className="flex items-center gap-2 py-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Searching nearby shops…</div></div>}

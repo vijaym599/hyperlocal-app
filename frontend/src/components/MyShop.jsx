@@ -51,6 +51,7 @@ const AVAILABILITY_OPTIONS = [
   { value: 'low_stock', label: 'Low stock' },
   { value: 'out_of_stock', label: 'Out of stock' }
 ];
+const STOCK_FILTER_OPTIONS = [...AVAILABILITY_OPTIONS, { value: 'unconfirmed', label: 'Needs confirmation' }];
 
 const SHOP_SECTION_IDS = new Set(['overview', 'catalog', 'offers', 'insights', 'demand', 'billing', 'notifications', 'reports', 'profile']);
 
@@ -61,6 +62,11 @@ const availabilityBadgeClass = (status) => ({
 }[status] || 'bg-slate-50 text-slate-600 border-slate-200');
 
 const availabilityLabel = (status) => AVAILABILITY_OPTIONS.find((item) => item.value === status)?.label || 'Available';
+const stockFreshnessLabel = (product) => product.stock_freshness === 'stale'
+  ? 'Needs confirmation'
+  : product.availability_updated_at
+    ? `Confirmed ${new Date(product.availability_updated_at).toLocaleDateString()}`
+    : 'Not confirmed yet';
 
 const MAX_PRODUCT_IMAGE_DIMENSION = 1200;
 const MAX_PRODUCT_IMAGE_SIZE = 1.2 * 1024 * 1024;
@@ -133,13 +139,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
   const [products, setProducts] = useState([]);
   const [productsTotal, setProductsTotal] = useState(0);
   const [productsNextPage, setProductsNextPage] = useState(null);
-  const [serverStockCounts, setServerStockCounts] = useState({ available: 0, low_stock: 0, out_of_stock: 0 });
+  const [serverStockCounts, setServerStockCounts] = useState({ available: 0, low_stock: 0, out_of_stock: 0, unconfirmed: 0 });
   const [productSearch, setProductSearch] = useState('');
   const [stockFilter, setStockFilter] = useState('all');
   const [productPage, setProductPage] = useState(1);
   const [productsError, setProductsError] = useState('');
   const [productNotice, setProductNotice] = useState('');
   const [updatingStockId, setUpdatingStockId] = useState(null);
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
+  const [bulkStockBusy, setBulkStockBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -220,7 +228,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
   const stockCounts = serverStockCounts;
   const filteredProducts = useMemo(() => {
     const term = productSearch.trim().toLowerCase();
-    return products.filter(p => (stockFilter === 'all' || (p.availability_status || 'available') === stockFilter) && [p.name, p.brand, p.description].some(value => String(value || '').toLowerCase().includes(term)));
+    return products.filter(p => (stockFilter === 'all' || (p.effective_availability_status || p.availability_status || 'available') === stockFilter) && [p.name, p.brand, p.description].some(value => String(value || '').toLowerCase().includes(term)));
   }, [products, productSearch, stockFilter]);
   const pageCount = Math.max(1, Math.ceil(filteredProducts.length / 12));
   const currentPage = Math.min(productPage, pageCount);
@@ -363,10 +371,15 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
       const res = await fetch(`${API_BASE_URL}/api/shops/${shopId}/products?page=${page}&limit=24`);
       if (res.ok) {
         const data = await res.json();
-        setProducts((current) => page === 1 ? (data.products || []) : [...current, ...(data.products || [])]);
+        const ownerProducts = (data.products || []).map((product) => ({
+          ...product,
+          effective_availability_status: product.availability_status,
+          availability_status: product.stored_availability_status || product.availability_status,
+        }));
+        setProducts((current) => page === 1 ? ownerProducts : [...current, ...ownerProducts]);
         setProductsTotal(Number(data.total || 0));
         setProductsNextPage(data.next_page || null);
-        setServerStockCounts(data.stock_counts || { available: 0, low_stock: 0, out_of_stock: 0 });
+        setServerStockCounts(data.stock_counts || { available: 0, low_stock: 0, out_of_stock: 0, unconfirmed: 0 });
       } else {
         setProductsError('Unable to load products. Please refresh to try again.');
       }
@@ -664,7 +677,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
   };
 
   const handleQuickStockUpdate = async (product, availability_status) => {
-    if (product.availability_status === availability_status) return;
+    if (product.availability_status === availability_status && product.stock_freshness !== 'stale') return;
     if (!subscriptionIsActive) { setProductsError('Your subscription has expired. Renew the plan to update stock.'); return; }
     setProductsError(''); setProductNotice('');
     setUpdatingStockId(product.id);
@@ -676,17 +689,38 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update stock status.');
-      setProducts((current) => current.map((item) => item.id === product.id ? { ...item, ...data.product } : item));
-      const previousStatus = product.availability_status || 'available';
-      setServerStockCounts((current) => ({
-        ...current,
-        [previousStatus]: Math.max(0, Number(current[previousStatus] || 0) - 1),
-        [availability_status]: Number(current[availability_status] || 0) + 1,
-      }));
+      await fetchProductsFromBackend(shopData.id);
+      setProductNotice(data.message || 'Stock status updated.');
     } catch (error) {
       setProductsError(error.message);
     } finally {
       setUpdatingStockId(null);
+    }
+  };
+
+  const handleBulkStockUpdate = async (action, availability_status = null, selectedOnly = false) => {
+    if (!shopData?.id || !subscriptionIsActive) return;
+    const product_ids = selectedOnly ? selectedProductIds : null;
+    if (selectedOnly && !product_ids.length) {
+      setProductsError('Select at least one product first.');
+      return;
+    }
+    setBulkStockBusy(true); setProductsError(''); setProductNotice('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/shops/${shopData.id}/products/stock`, {
+        method: 'PATCH',
+        headers: authenticatedJsonHeaders(),
+        body: JSON.stringify({ action, availability_status, product_ids }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update stock.');
+      setSelectedProductIds([]);
+      setProductNotice(data.message);
+      await fetchProductsFromBackend(shopData.id);
+    } catch (error) {
+      setProductsError(error.message);
+    } finally {
+      setBulkStockBusy(false);
     }
   };
 
@@ -1060,7 +1094,7 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
       {dashboardFeedback && <FeedbackBanner tone={dashboardFeedback.tone} className="mb-5">{dashboardFeedback.message}</FeedbackBanner>}
 
       {(dashboardSection === 'overview' || dashboardSection === 'catalog') && <div className={`grid grid-cols-2 gap-3 sm:grid-cols-4 ${dashboardSection === 'overview' ? 'mb-4' : 'mb-5'}`}>
-        {[['Listed products', productsTotal, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { selectDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
+        {[['Listed products', productsTotal, 'all'], ['Available', stockCounts.available || 0, 'available'], ['Low stock', stockCounts.low_stock || 0, 'low_stock'], ['Needs confirmation', stockCounts.unconfirmed || 0, 'unconfirmed'], ['Out of stock', stockCounts.out_of_stock || 0, 'out_of_stock']].map(([label, count, filter]) => <button key={filter} type="button" onClick={() => { selectDashboardSection('catalog'); setStockFilter(filter); setProductSearch(''); setProductPage(1); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-400"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-2xl font-extrabold">{fetchingProducts && !products.length ? '…' : count}</p></button>)}
       </div>}
       {dashboardSection === 'overview' && shopData?.id && !shopData.phone && !shopData.whatsapp_number && <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><p className="font-bold text-amber-950">Customer contact is missing</p><p className="mt-1 text-sm text-amber-800">Add a Call or WhatsApp number so customers can contact your shop. Your account login number stays private.</p></div></div><button type="button" onClick={openShopEditor} className="rounded-xl bg-amber-700 px-4 py-2 text-xs font-bold text-white">Add contact</button></div></section>}
       {dashboardSection === 'overview' && shopData?.id && <ShopShare shop={shopData} compact />}
@@ -1221,7 +1255,11 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
             <div className="flex items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"><Search className="h-4 w-4 text-slate-400" /><input value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }} placeholder="Search loaded catalog" className="w-36 bg-transparent text-sm outline-none" /></label>{fetchingProducts && <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}</div>
           </div>
 
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="text-xs font-semibold text-slate-600">Stock filter <select value={stockFilter} onChange={event => { setStockFilter(event.target.value); setProductPage(1); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="all">All products</option>{AVAILABILITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span className="text-xs text-slate-500">{filteredProducts.length} matching products</span></div>
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold text-emerald-900">Keep stock trustworthy without editing every product</p><p className="mt-1 text-[11px] text-emerald-800">Confirm the saved statuses in one click. Products not confirmed on time are shown to customers as “Call shop to confirm”.</p></div><button type="button" disabled={bulkStockBusy || !subscriptionIsActive || !productsTotal} onClick={() => handleBulkStockUpdate('confirm')} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">{bulkStockBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Confirm current stock</button></div></div>
+
+          {selectedProductIds.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3"><span className="mr-auto text-xs font-bold text-slate-700">{selectedProductIds.length} selected</span>{AVAILABILITY_OPTIONS.map((option) => <button key={option.value} type="button" disabled={bulkStockBusy} onClick={() => handleBulkStockUpdate('set_status', option.value, true)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 disabled:opacity-40">Mark {option.label}</button>)}<button type="button" onClick={() => setSelectedProductIds([])} className="px-2 py-1 text-[11px] font-bold text-slate-500">Clear</button></div>}
+
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="text-xs font-semibold text-slate-600">Stock filter <select value={stockFilter} onChange={event => { setStockFilter(event.target.value); setProductPage(1); }} className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="all">All products</option>{STOCK_FILTER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span className="text-xs text-slate-500">{filteredProducts.length} matching products</span></div>
           {productsError && <FeedbackBanner className="mb-4">{productsError}</FeedbackBanner>}
           {productNotice && <FeedbackBanner tone="success" className="mb-4">{productNotice}</FeedbackBanner>}
           {fetchingProducts && products.length === 0 ? <LoadingState compact label="Loading products…" rows={3} /> : products.length === 0 ? (
@@ -1231,15 +1269,16 @@ const MyShop = ({ session, onLoginSuccess, onLogout, theme = 'light', onToggleTh
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {visibleProducts.map((p) => (
-                <div key={p.id} className="border border-slate-200 rounded-xl p-3 transition hover:border-emerald-300 bg-white shadow-2xs">
+                <div key={p.id} className={`border rounded-xl p-3 transition bg-white shadow-2xs ${p.stock_freshness === 'stale' ? 'border-amber-300' : 'border-slate-200 hover:border-emerald-300'}`}>
                   <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-hidden">
+                    <input type="checkbox" aria-label={`Select ${p.name}`} checked={selectedProductIds.includes(p.id)} onChange={(event) => setSelectedProductIds((current) => event.target.checked ? [...new Set([...current, p.id])] : current.filter((id) => id !== p.id))} className="h-4 w-4 shrink-0 accent-emerald-600" />
                     <ProductImage product={p} className="h-16 w-16 shrink-0 rounded-lg border border-slate-100" />
                     <div className="overflow-hidden">
                       <h4 className="font-bold text-sm text-slate-800 truncate">{p.name}</h4>
                       <p className="text-sm font-extrabold text-emerald-600 mt-0.5">₹{p.price}</p>
                       <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${availabilityBadgeClass(p.availability_status)}`}>{availabilityLabel(p.availability_status)}</span>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500"><span className="inline-flex items-center gap-1 font-semibold text-amber-700"><Star className="h-3 w-3 fill-amber-400 text-amber-400" />{Number(p.average_rating || 0).toFixed(1)} ({p.review_count || 0})</span><span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />Added {p.created_at ? new Date(p.created_at).toLocaleDateString() : 'recently'}</span></div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500"><span className="inline-flex items-center gap-1 font-semibold text-amber-700"><Star className="h-3 w-3 fill-amber-400 text-amber-400" />{Number(p.average_rating || 0).toFixed(1)} ({p.review_count || 0})</span><span className={`inline-flex items-center gap-1 font-semibold ${p.stock_freshness === 'stale' ? 'text-amber-700' : 'text-slate-500'}`}><CalendarDays className="h-3 w-3" />{stockFreshnessLabel(p)}</span></div>
                     </div>
                   </div>
 

@@ -94,7 +94,7 @@ export default function App() {
   useEffect(() => { if (role !== 'admin') trackPageVisit(activeTab); }, [activeTab, role]);
 
   return <div className="flex min-h-[100dvh] flex-col bg-transparent font-sans text-slate-800">
-    <Navbar activeTab={activeTab} setActiveTab={navigate} session={session} role={role} onCustomerAuth={() => requireCustomerLogin(null)} />
+    <Navbar activeTab={activeTab} setActiveTab={navigate} session={session} role={role} onCustomerAuth={() => requireCustomerLogin(null)} onOpenShop={openShop} />
     <NetworkStatusBanner />
 
     <div className="flex min-w-0 flex-1 flex-col">

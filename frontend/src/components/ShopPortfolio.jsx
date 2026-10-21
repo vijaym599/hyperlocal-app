@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BadgeCheck, Check, MapPin, Search, Share2, Star, Store } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Check, MapPin, MessageCircle, Phone, Search, Share2, Star, Store } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { shopShareLink } from '../shopLinks.mjs';
 import ShopContact from './ShopContact';
@@ -10,7 +10,15 @@ import { trackShopActivity } from '../activity.mjs';
 import { RequestError, requestError } from '../requestState.mjs';
 import { EmptyState, ErrorState, FeedbackBanner, LoadingState } from './ui/StatePanel';
 
-const statusStyle = { available: 'bg-emerald-50 text-emerald-700', low_stock: 'bg-amber-50 text-amber-700', out_of_stock: 'bg-rose-50 text-rose-700' };
+const statusStyle = { available: 'bg-emerald-50 text-emerald-700', low_stock: 'bg-amber-50 text-amber-700', unconfirmed: 'bg-slate-100 text-slate-700', out_of_stock: 'bg-rose-50 text-rose-700' };
+const statusLabel = (status) => status === 'available' ? 'Confirmed available' : status === 'low_stock' ? 'Confirmed low stock' : status === 'unconfirmed' ? 'Check with shop' : 'Out of stock';
+const confirmationAge = (value, stale = false) => {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return null;
+  const hours = Math.max(0, Math.floor((Date.now() - time) / 3600000));
+  const age = hours < 1 ? 'just now' : hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+  return stale ? `Last confirmed ${age}` : `Confirmed ${age}`;
+};
 
 export default function ShopPortfolio({ shopId, initialShop, onBack, onRequireLogin, session, backLabel = 'Back to nearby shops' }) {
   const [shop, setShop] = useState(initialShop?.name ? initialShop : null); const [products, setProducts] = useState([]); const [query, setQuery] = useState(''); const [error, setError] = useState(null); const [shareNotice, setShareNotice] = useState(''); const [retry, setRetry] = useState(0);
@@ -71,6 +79,17 @@ export default function ShopPortfolio({ shopId, initialShop, onBack, onRequireLo
       }
     }
   };
+  const checkProductAvailability = (product) => {
+    const whatsapp = String(shop.whatsapp_number || '').replace(/\D/g, '');
+    const phone = String(shop.phone || '').replace(/[^+\d]/g, '');
+    if (whatsapp) {
+      trackShopActivity('whatsapp', shopId, { session, productId: product.id, source: 'shop-catalog-stock-check' });
+      window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(`Hi, is ${product.name} available at ${shop.name}?`)}`, '_blank', 'noopener,noreferrer');
+    } else if (phone) {
+      trackShopActivity('call', shopId, { session, productId: product.id, source: 'shop-catalog-stock-check' });
+      window.open(`tel:${phone}`, '_self');
+    }
+  };
   if (!Number(shopId) || error) return <div className="mx-auto max-w-5xl px-5 py-10"><ErrorState error={error || new RequestError(404)} onRetry={Number(shopId) ? () => { setError(null); setRetry(value => value + 1); } : undefined} onBack={onBack} /></div>;
   if (!shop) return <div className="mx-auto max-w-5xl px-5 py-10"><LoadingState label="Loading shop portfolio…" rows={4} /></div>;
   return <section className="mx-auto max-w-6xl px-3 py-3 sm:px-8 sm:py-6">
@@ -90,7 +109,7 @@ export default function ShopPortfolio({ shopId, initialShop, onBack, onRequireLo
       </header>
     </div>
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-800">Shop catalog</h2><p className="mt-0.5 text-sm text-slate-500">{catalogPage.total || products.length} products listed by this shop</p></div><label className="flex w-full max-w-sm items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5"><Search className="h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search loaded products by name or brand" className="w-full text-sm outline-none" /></label></div>
-    {!visibleProducts.length ? <EmptyState kind={query.trim() ? 'search' : 'empty'} title={query.trim() ? 'No matching products' : 'This catalog is empty'} description={query.trim() ? `No products match “${query.trim()}”. Try another name or brand.` : 'This shop has not published any products yet.'} onAction={query.trim() ? () => setQuery('') : undefined} actionLabel="Clear search" className="mt-5" /> : <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleProducts.map((product) => <article key={product.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><ProductImage product={product} className="h-44 w-full sm:h-48" /><div className="p-4"><div className="flex items-start justify-between gap-3"><h3 className="font-bold text-slate-800">{product.name}</h3><span className="font-extrabold text-emerald-600">₹{product.price}</span></div>{product.brand && <p className="mt-1 text-xs font-semibold text-slate-500">{product.brand}</p>}<div className="mt-3 flex items-center justify-between"><span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusStyle[product.availability_status] || 'bg-slate-100 text-slate-600'}`}>{String(product.availability_status || 'available').replace('_', ' ')}</span><span className="flex items-center gap-1 text-xs font-bold text-amber-700"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />{Number(product.average_rating || 0).toFixed(1)}/5 ({product.review_count || 0})</span></div>{product.description && <p className="mt-3 line-clamp-2 text-sm text-slate-500">{product.description}</p>}</div></article>)}</div>}
+    {!visibleProducts.length ? <EmptyState kind={query.trim() ? 'search' : 'empty'} title={query.trim() ? 'No matching products' : 'This catalog is empty'} description={query.trim() ? `No products match “${query.trim()}”. Try another name or brand.` : 'This shop has not published any products yet.'} onAction={query.trim() ? () => setQuery('') : undefined} actionLabel="Clear search" className="mt-5" /> : <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleProducts.map((product) => <article key={product.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><ProductImage product={product} className="h-44 w-full sm:h-48" /><div className="p-4"><div className="flex items-start justify-between gap-3"><h3 className="font-bold text-slate-800">{product.name}</h3><span className="font-extrabold text-emerald-600">₹{product.price}</span></div>{product.brand && <p className="mt-1 text-xs font-semibold text-slate-500">{product.brand}</p>}<div className="mt-3 flex items-center justify-between gap-2"><div><span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusStyle[product.availability_status] || 'bg-slate-100 text-slate-600'}`}>{statusLabel(product.availability_status)}</span>{confirmationAge(product.availability_updated_at, product.availability_status === 'unconfirmed') && <p className="mt-1 text-[10px] text-slate-400">{confirmationAge(product.availability_updated_at, product.availability_status === 'unconfirmed')}</p>}</div><span className="flex items-center gap-1 text-xs font-bold text-amber-700"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />{Number(product.average_rating || 0).toFixed(1)}/5 ({product.review_count || 0})</span></div>{product.description && <p className="mt-3 line-clamp-2 text-sm text-slate-500">{product.description}</p>}{(shop.whatsapp_number || shop.phone) && product.availability_status !== 'out_of_stock' && <button type="button" onClick={() => checkProductAvailability(product)} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">{shop.whatsapp_number ? <MessageCircle className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}Check availability</button>}</div></article>)}</div>}
     {catalogError && <FeedbackBanner className="mt-4"><span>{catalogError.message || 'Unable to load more products.'}</span> <button type="button" onClick={loadMoreProducts} className="ml-2 font-bold underline">Retry</button></FeedbackBanner>}
     {catalogPage.next_page && <div className="mt-5 text-center"><button type="button" disabled={loadingMore} onClick={loadMoreProducts} className="rounded-xl border border-emerald-600 px-5 py-2.5 text-sm font-bold text-emerald-700 disabled:opacity-50">{loadingMore ? 'Loading products…' : 'Load more products'}</button></div>}
     <ShopReviews shop={shop} session={session} onRequireLogin={onRequireLogin} onSummaryChange={handleReviewSummary} />

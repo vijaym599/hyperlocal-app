@@ -177,6 +177,32 @@ const initDb = async () => {
       CREATE INDEX IF NOT EXISTS shop_notifications_shop_created_idx
         ON shop_notifications (shop_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS product_stock_alerts (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        notified_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (user_id, product_id)
+      );
+      CREATE INDEX IF NOT EXISTS product_stock_alerts_product_active_idx
+        ON product_stock_alerts (product_id, active) WHERE active=TRUE;
+
+      CREATE TABLE IF NOT EXISTS customer_notifications (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        shop_id INTEGER REFERENCES shops(id) ON DELETE SET NULL,
+        notification_type VARCHAR(40) NOT NULL DEFAULT 'stock_available',
+        title VARCHAR(160) NOT NULL,
+        message TEXT NOT NULL,
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS customer_notifications_user_created_idx
+        ON customer_notifications (user_id, created_at DESC);
+
       CREATE TABLE IF NOT EXISTS shop_subscription_queue (
         id BIGSERIAL PRIMARY KEY,
         shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,

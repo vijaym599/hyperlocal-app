@@ -10,6 +10,7 @@ import {
   UserRoundCog,
 } from 'lucide-react';
 import { navigationItems } from '../navigation.mjs';
+import CustomerNotifications from './CustomerNotifications';
 
 const icons = {
   discover: Compass,
@@ -36,7 +37,7 @@ const pageNames = {
   'report-issue': 'Support',
 };
 
-export default function Navbar({ activeTab, setActiveTab, session, role, onCustomerAuth }) {
+export default function Navbar({ activeTab, setActiveTab, session, role, onCustomerAuth, onOpenShop }) {
   const discoveryNavigation = role === 'guest' || role === 'customer';
   const items = navigationItems(role);
   const homeTab = role === 'admin' ? 'demand' : role === 'shop_owner' ? 'my-shop' : 'explore';
@@ -79,6 +80,7 @@ export default function Navbar({ activeTab, setActiveTab, session, role, onCusto
 
       <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
         {activeTab !== 'explore' && discoveryNavigation && <button type="button" onClick={() => go('explore')} aria-label="Search products" className="hidden min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-bold text-slate-600 hover:bg-white/60 xl:flex"><Search className="h-4 w-4" />Search</button>}
+        {role === 'customer' && session?.token && <CustomerNotifications session={session} onOpenShop={onOpenShop} />}
         {session?.token ? <button type="button" onClick={() => go(accountTab)} className="ui-control flex min-h-11 max-w-44 items-center gap-2 rounded-xl border px-2.5 text-left text-xs font-bold text-slate-700 sm:px-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700">{role === 'admin' ? <UserRoundCog className="h-4 w-4" /> : <CircleUserRound className="h-4 w-4" />}</span><span className="hidden truncate md:block">{accountName}</span></button>
           : <button type="button" onClick={onCustomerAuth} className="flex min-h-11 items-center gap-1.5 rounded-xl bg-emerald-700 px-3 text-xs font-bold text-white shadow-lg shadow-emerald-900/15 sm:px-4"><LogIn className="h-4 w-4" /><span>Sign in</span></button>}
       </div>

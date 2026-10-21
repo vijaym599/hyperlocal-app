@@ -16,8 +16,10 @@ const { mountAccount } = require('./account');
 const { getPromotion, getShopPromotion, promotedSubscriptionTerms, claimPromotionRedemption } = require('./subscriptionPromotions');
 const { mountCustomerAssistant } = require('./customerAssistant');
 const { mountSupportReports } = require('./supportReports');
+const { mountCustomerNotifications, notifyStockAvailable } = require('./customerNotifications');
 const { requestId, securityHeaders, securityEvent, adminAudit, notFound, handleError } = require('./security');
 const { PASSWORD_REQUIREMENT, isUsablePasswordInput, isStrongPassword } = require('./passwordPolicy');
+const { STOCK_WINDOW_HOURS_SQL, STOCK_IS_FRESH_SQL, STOCK_FRESHNESS_SQL, EFFECTIVE_AVAILABILITY_SQL } = require('./stockFreshness');
 
 const app = express();
 const authenticate = withAccountValidation(pool);
@@ -70,6 +72,7 @@ app.use('/api', rateLimit(600, 15 * 60 * 1000, 'api-global'));
 app.use('/api/auth', rateLimit(20, 15 * 60 * 1000));
 mountCustomerAssistant(app, pool, rateLimit(20, 10 * 60 * 1000, 'customer-assistant'));
 mountSupportReports(app, pool, authenticate, rateLimit);
+mountCustomerNotifications(app, pool, authenticate);
 const rateLimitCleanup = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateLimitStore) if (entry.resetAt <= now) rateLimitStore.delete(key);
@@ -92,6 +95,10 @@ const SUBSCRIPTION_LIMITS = {
 const VERIFIED_SUBSCRIPTION_PLANS = new Set(['pro', 'advance', 'enterprise']);
 
 const AVAILABILITY_STATUSES = new Set(['available', 'low_stock', 'out_of_stock']);
+const sendStockNotifications = async (productIds) => {
+  try { return await notifyStockAvailable(pool, productIds); }
+  catch (error) { console.error('Stock notification delivery failed:', error.message); return 0; }
+};
 const productFallbackImage = (name, brand = '') => `https://loremflickr.com/640/480/${encodeURIComponent(`${brand || ''} ${name || 'local product'}`.trim())}`;
 const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const indianContactPhone = (value) => {
@@ -174,7 +181,7 @@ const ownedShopAccess = async (shopId, userId) => (await pool.query(
 )).rows[0];
 
 const productShopAccess = async (productId, userId) => (await pool.query(
-  `SELECT s.id,s.subscription_ends_at,s.subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
+  `SELECT s.id,s.subscription_ends_at,p.availability_status,s.subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active
    FROM products p JOIN shops s ON s.id=p.shop_id WHERE p.id=$1 AND s.user_id=$2`, [productId, userId]
 )).rows[0];
 
@@ -523,14 +530,17 @@ app.get('/api/shops/:shopId/products', rateLimit(120, 10 * 60 * 1000, 'shop-prod
 
   try {
     const productsRes = await pool.query(
-      `SELECT p.*,
-        CASE WHEN s.subscription_ends_at > CURRENT_TIMESTAMP THEN p.availability_status ELSE 'out_of_stock' END AS availability_status,
+      `SELECT p.*, p.availability_status AS stored_availability_status,
+        ${EFFECTIVE_AVAILABILITY_SQL} AS availability_status,
+        ${STOCK_FRESHNESS_SQL} AS stock_freshness,
+        p.availability_updated_at + (${STOCK_WINDOW_HOURS_SQL} * INTERVAL '1 hour') AS stock_valid_until,
         COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
         (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count,
         COUNT(*) OVER()::int AS total_count,
-        COUNT(*) FILTER (WHERE s.subscription_ends_at > CURRENT_TIMESTAMP AND COALESCE(p.availability_status, 'available') = 'available') OVER()::int AS available_count,
-        COUNT(*) FILTER (WHERE s.subscription_ends_at > CURRENT_TIMESTAMP AND p.availability_status = 'low_stock') OVER()::int AS low_stock_count,
-        COUNT(*) FILTER (WHERE s.subscription_ends_at IS NULL OR s.subscription_ends_at <= CURRENT_TIMESTAMP OR p.availability_status = 'out_of_stock') OVER()::int AS out_of_stock_count
+        COUNT(*) FILTER (WHERE ${EFFECTIVE_AVAILABILITY_SQL} = 'available') OVER()::int AS available_count,
+        COUNT(*) FILTER (WHERE ${EFFECTIVE_AVAILABILITY_SQL} = 'low_stock') OVER()::int AS low_stock_count,
+        COUNT(*) FILTER (WHERE ${EFFECTIVE_AVAILABILITY_SQL} = 'out_of_stock') OVER()::int AS out_of_stock_count,
+        COUNT(*) FILTER (WHERE ${EFFECTIVE_AVAILABILITY_SQL} = 'unconfirmed') OVER()::int AS unconfirmed_count
        FROM products p JOIN shops s ON s.id = p.shop_id
        WHERE p.shop_id = $1 ORDER BY p.id DESC LIMIT $2 OFFSET $3`,
       [shopId, pageSize + 1, (page - 1) * pageSize]
@@ -538,11 +548,11 @@ app.get('/api/shops/:shopId/products', rateLimit(120, 10 * 60 * 1000, 'shop-prod
     const counts = productsRes.rows[0] || {};
     const total = counts.total_count || 0;
     return res.json({
-      products: productsRes.rows.slice(0, pageSize).map(({ total_count, available_count, low_stock_count, out_of_stock_count, ...product }) => product),
+      products: productsRes.rows.slice(0, pageSize).map(({ total_count, available_count, low_stock_count, out_of_stock_count, unconfirmed_count, ...product }) => product),
       total, page, page_size: pageSize,
       has_more: productsRes.rows.length > pageSize,
       next_page: productsRes.rows.length > pageSize ? page + 1 : null,
-      stock_counts: { available: counts.available_count || 0, low_stock: counts.low_stock_count || 0, out_of_stock: counts.out_of_stock_count || 0 },
+      stock_counts: { available: counts.available_count || 0, low_stock: counts.low_stock_count || 0, out_of_stock: counts.out_of_stock_count || 0, unconfirmed: counts.unconfirmed_count || 0 },
     });
   } catch (err) {
     console.error('Fetch Products Error:', err);
@@ -569,7 +579,9 @@ app.get('/api/shops/:shopId/portfolio', rateLimit(120, 10 * 60 * 1000, 'shop-por
          FROM shops s WHERE s.id = $1`, [shopId]
       ),
       pool.query(
-        `SELECT p.*, CASE WHEN s.subscription_ends_at > CURRENT_TIMESTAMP THEN p.availability_status ELSE 'out_of_stock' END AS availability_status,
+        `SELECT p.*, ${EFFECTIVE_AVAILABILITY_SQL} AS availability_status,
+                ${STOCK_FRESHNESS_SQL} AS stock_freshness,
+                p.availability_updated_at + (${STOCK_WINDOW_HOURS_SQL} * INTERVAL '1 hour') AS stock_valid_until,
                 COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS average_rating,
                 (SELECT COUNT(*)::int FROM product_reviews WHERE product_id = p.id) AS review_count,
                 COUNT(*) OVER()::int AS total_count
@@ -938,10 +950,55 @@ app.patch('/api/products/:id/availability', authenticate, async (req, res) => {
       [availability_status, productId, req.user.userId]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Product not found, or you do not own its shop.' });
+    if (availability_status === 'available') await sendStockNotifications([productId]);
     return res.json({ message: 'Stock status updated.', product: result.rows[0] });
   } catch (err) {
     console.error('Product stock update error:', err);
     return res.status(500).json({ error: 'Unable to update stock status.' });
+  }
+});
+
+// Confirm every saved status in one action, or update a selected group.
+app.patch('/api/shops/:shopId/products/stock', authenticate, async (req, res) => {
+  const shopId = Number(req.params.shopId);
+  const { action, availability_status } = req.body || {};
+  const productIds = req.body?.product_ids == null ? null : req.body.product_ids;
+  const validIds = Array.isArray(productIds)
+    && productIds.length > 0
+    && productIds.length <= 200
+    && productIds.every((id) => Number.isSafeInteger(Number(id)) && Number(id) > 0 && Number(id) <= 2147483647);
+  if (!Number.isSafeInteger(shopId) || shopId < 1 || shopId > 2147483647 || !['confirm', 'set_status'].includes(action)) {
+    return res.status(400).json({ error: 'Choose a valid stock action.' });
+  }
+  if (action === 'set_status' && (!validIds || !AVAILABILITY_STATUSES.has(availability_status))) {
+    return res.status(400).json({ error: 'Select up to 200 products and a valid stock status.' });
+  }
+  if (action === 'confirm' && productIds !== null && !validIds) {
+    return res.status(400).json({ error: 'Select up to 200 valid products, or confirm the complete catalog.' });
+  }
+
+  try {
+    const access = await ownedShopAccess(shopId, req.user.userId);
+    if (!requireActiveSubscription(res, access)) return;
+    const ids = validIds ? productIds.map(Number) : null;
+    const nextStatus = action === 'set_status' ? availability_status : null;
+    const result = await pool.query(
+      `UPDATE products
+       SET availability_status = COALESCE($1::varchar, availability_status),
+           availability_updated_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE shop_id = $2 AND ($3::int[] IS NULL OR id = ANY($3::int[]))
+       RETURNING *`,
+      [nextStatus, shopId, ids]
+    );
+    await sendStockNotifications(result.rows.filter((product) => product.availability_status === 'available').map((product) => product.id));
+    const message = action === 'confirm'
+      ? `${result.rows.length} product stock status${result.rows.length === 1 ? '' : 'es'} confirmed.`
+      : `${result.rows.length} product${result.rows.length === 1 ? '' : 's'} updated to ${availability_status.replaceAll('_', ' ')}.`;
+    return res.json({ message, updated_count: result.rows.length, products: result.rows });
+  } catch (err) {
+    console.error('Bulk stock update error:', err.message);
+    return res.status(500).json({ error: 'Unable to update the selected stock.' });
   }
 });
 
@@ -997,6 +1054,8 @@ app.put('/api/products/:id', authenticate, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found, or you do not own its shop.' });
     }
+
+    if (availability_status === 'available') await sendStockNotifications([Number(id)]);
 
     return res.json({ 
       message: 'Product updated successfully', 
@@ -1311,7 +1370,9 @@ app.get('/api/search/products', rateLimit(120, 10 * 60 * 1000, 'product-search')
         WITH ranked_products AS (
           SELECT
             p.id, p.name, p.description, p.brand, p.price, p.image_url,
-            CASE WHEN s.subscription_ends_at > CURRENT_TIMESTAMP THEN p.availability_status ELSE 'out_of_stock' END AS availability_status,
+            ${EFFECTIVE_AVAILABILITY_SQL} AS availability_status,
+            ${STOCK_FRESHNESS_SQL} AS stock_freshness,
+            p.availability_updated_at + (${STOCK_WINDOW_HOURS_SQL} * INTERVAL '1 hour') AS stock_valid_until,
             p.availability_updated_at, p.updated_at AS catalog_updated_at,
             s.id AS shop_id, s.name AS shop_name, s.category AS shop_category, s.image_url AS shop_image_url,
             s.address, s.latitude, s.longitude, s.google_map_link,
@@ -1332,7 +1393,7 @@ app.get('/api/search/products', rateLimit(120, 10 * 60 * 1000, 'product-search')
           WHERE (
             p.name ILIKE $3 OR p.brand ILIKE $3 OR p.description ILIKE $3 OR s.name ILIKE $3
           )
-          AND ($5 = 'all' OR (s.subscription_ends_at > CURRENT_TIMESTAMP AND p.availability_status = $5))
+          AND ($5 = 'all' OR (s.subscription_ends_at > CURRENT_TIMESTAMP AND p.availability_status = $5 AND ${STOCK_IS_FRESH_SQL}))
           AND ($6 = 'all' OR (${categorySql}) = $6)
         )
         SELECT *
@@ -1343,7 +1404,8 @@ app.get('/api/search/products', rateLimit(120, 10 * 60 * 1000, 'product-search')
           CASE availability_status
             WHEN 'available' THEN 0
             WHEN 'low_stock' THEN 1
-            ELSE 2
+            WHEN 'unconfirmed' THEN 2
+            ELSE 3
           END,
           distance_km ASC,
           price ASC, id ASC
@@ -1619,7 +1681,8 @@ const handleExploreOrNearby = async (req, res) => {
         p.brand,
         p.price, 
         p.image_url,
-        p.availability_status,
+        ${EFFECTIVE_AVAILABILITY_SQL} AS availability_status,
+        ${STOCK_FRESHNESS_SQL} AS stock_freshness,
         p.availability_updated_at,
         p.updated_at AS catalog_updated_at
       FROM shops s
@@ -1663,6 +1726,7 @@ const handleExploreOrNearby = async (req, res) => {
           price: row.price,
           image_url: row.image_url,
           availability_status: row.availability_status,
+          stock_freshness: row.stock_freshness,
           availability_updated_at: row.availability_updated_at,
           catalog_updated_at: row.catalog_updated_at
         });

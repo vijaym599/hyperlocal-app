@@ -1,4 +1,5 @@
 const Fuse = require('fuse.js');
+const { STOCK_IS_FRESH_SQL, STOCK_FRESHNESS_SQL, EFFECTIVE_AVAILABILITY_SQL } = require('./stockFreshness');
 
 const MAX_MESSAGE_LENGTH = 300;
 const DEFAULT_RADIUS_KM = 25;
@@ -128,8 +129,9 @@ function exactScore(product, terms) {
 }
 
 function stableProductOrder(left, right) {
-  const available = Number(right.availability_status === 'available') - Number(left.availability_status === 'available');
-  if (available) return available;
+  const stockPriority = { available: 0, low_stock: 1, unconfirmed: 2, out_of_stock: 3 };
+  const stock = (stockPriority[left.availability_status] ?? 3) - (stockPriority[right.availability_status] ?? 3);
+  if (stock) return stock;
   const open = Number(right.is_open === true) - Number(left.is_open === true);
   if (open) return open;
   const verified = Number(right.is_verified === true) - Number(left.is_verified === true);
@@ -251,9 +253,13 @@ function mountCustomerAssistant(app, pool, limiter = (_req, _res, next) => next(
     try {
       const candidateResult = await pool.query(
         `WITH assistant_candidates AS (
-          SELECT p.id, p.name, p.description, p.brand, p.price, p.availability_status,
+          SELECT p.id, p.name, p.description, p.brand, p.price,
+                 ${EFFECTIVE_AVAILABILITY_SQL} AS availability_status,
+                 ${STOCK_FRESHNESS_SQL} AS stock_freshness,
+                 p.availability_updated_at,
                  s.id AS shop_id, s.name AS shop_name, s.category AS shop_category,
-                 s.address, s.image_url AS shop_image_url, s.is_open, s.is_verified,
+                 s.address, s.phone AS shop_phone, s.whatsapp_number AS shop_whatsapp_number,
+                 s.image_url AS shop_image_url, s.is_open, s.is_verified,
                  COALESCE((SELECT ROUND(AVG(rating)::numeric, 1) FROM product_reviews WHERE product_id = p.id), 0) AS product_average_rating,
                  6371 * acos(LEAST(1, GREATEST(-1,
                    cos(radians($1)) * cos(radians(s.latitude)) * cos(radians(s.longitude) - radians($2)) +
@@ -264,11 +270,11 @@ function mountCustomerAssistant(app, pool, limiter = (_req, _res, next) => next(
           WHERE s.subscription_ends_at > CURRENT_TIMESTAMP
             AND p.availability_status <> 'out_of_stock'
             AND ($3::numeric IS NULL OR p.price <= $3)
-            AND ($5::boolean = FALSE OR p.availability_status = 'available')
+            AND ($5::boolean = FALSE OR (p.availability_status = 'available' AND ${STOCK_IS_FRESH_SQL}))
         )
         SELECT * FROM assistant_candidates
         WHERE distance_km <= $4
-        ORDER BY CASE availability_status WHEN 'available' THEN 0 ELSE 1 END,
+        ORDER BY CASE availability_status WHEN 'available' THEN 0 WHEN 'low_stock' THEN 1 WHEN 'unconfirmed' THEN 2 ELSE 3 END,
                  CASE WHEN is_open THEN 0 ELSE 1 END, distance_km ASC,
                  product_average_rating DESC, price ASC, id ASC
         LIMIT $6`,

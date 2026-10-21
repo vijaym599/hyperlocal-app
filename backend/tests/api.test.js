@@ -37,11 +37,12 @@ const pool = {
     if (sql.includes('subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active') && sql.includes('FROM shop_offers o')) return { rows: [{ id: 1, subscription_active: shopSubscriptionActive }] };
     if (sql.includes('subscription_ends_at > CURRENT_TIMESTAMP AS subscription_active') && sql.includes('FROM shops')) return { rows: [{ id: 1, subscription_plan: 'pro', subscription_active: shopSubscriptionActive }] };
     if (sql.includes('SELECT subscription_plan')) return { rows: [{ subscription_plan: 'pro' }] };
+    if (sql.includes('SET availability_status = COALESCE($1::varchar')) return { rows: (values[2] || [1, 2]).map((id) => ({ id, availability_status: values[0] || 'available' })) };
     if (sql.includes('UPDATE products p')) return { rows: [{ id: 1, name: values[0], description: values[1], brand: values[2], price: values[3] }] };
     if (sql.startsWith('UPDATE shops') && sql.includes('whatsapp_number = $8')) return { rows: [{ id: 1, name: values[0], category: values[1], phone: values[6], whatsapp_number: values[7] }] };
     if (sql.includes('SELECT s.id, s.name, s.category')) return { rows: [{ id: 1, name: 'Test shop' }] };
     if (sql.includes('COUNT(*) OVER()::int AS total_count') && sql.includes('FROM products p JOIN shops s')) {
-      const products = Array.from({ length: 30 }, (_, index) => ({ id: index + 1, name: `Catalog product ${index + 1}`, total_count: 30, available_count: 20, low_stock_count: 6, out_of_stock_count: 4 }));
+      const products = Array.from({ length: 30 }, (_, index) => ({ id: index + 1, name: `Catalog product ${index + 1}`, total_count: 30, available_count: 18, low_stock_count: 6, out_of_stock_count: 4, unconfirmed_count: 2 }));
       return { rows: products.slice(values[2], values[2] + values[1]) };
     }
     if (sql.includes('COUNT(*)')) return { rows: [{ count: 0 }] };
@@ -99,7 +100,8 @@ test('discovery returns ten products per page and exposes subsequent pages', asy
   assert.equal(last.next_page, null);
   const sql = calls.findLast(call => call.sql.includes('WITH ranked_products')).sql;
   assert.match(sql, /CASE WHEN subscription_active THEN 0 ELSE 1 END/);
-  assert.match(sql, /ELSE 'out_of_stock' END AS availability_status/);
+  assert.match(sql, /THEN 'unconfirmed'/);
+  assert.match(sql, /AS stock_freshness/);
   assert.equal(calls.find(call => call.sql.includes('WITH ranked_products')).values[3], 5000);
 });
 
@@ -357,11 +359,29 @@ test('shop products use bounded pagination and retain aggregate inventory counts
   assert.equal(body.products[0].id, 11);
   assert.equal(body.total, 30);
   assert.equal(body.next_page, 3);
-  assert.deepEqual(body.stock_counts, { available: 20, low_stock: 6, out_of_stock: 4 });
+  assert.deepEqual(body.stock_counts, { available: 18, low_stock: 6, out_of_stock: 4, unconfirmed: 2 });
   assert.equal(Object.hasOwn(body.products[0], 'available_count'), false);
   const catalogQuery = calls.findLast(call => call.sql.includes('FROM products p JOIN shops s'));
   assert.deepEqual(catalogQuery.values, [1, 11, 10]);
-  assert.match(catalogQuery.sql, /CASE WHEN s\.subscription_ends_at > CURRENT_TIMESTAMP THEN p\.availability_status ELSE 'out_of_stock'/);
+  assert.match(catalogQuery.sql, /THEN 'unconfirmed'/);
+  assert.match(catalogQuery.sql, /AS stock_valid_until/);
+});
+
+test('owners can confirm the catalog once or bulk update selected stock', async () => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ userId: 1 }, process.env.JWT_SECRET)}` };
+  const confirm = await fetch(base + '/api/shops/1/products/stock', { method: 'PATCH', headers, body: JSON.stringify({ action: 'confirm' }) });
+  assert.equal(confirm.status, 200);
+  assert.equal((await confirm.json()).updated_count, 2);
+
+  const selected = await fetch(base + '/api/shops/1/products/stock', { method: 'PATCH', headers, body: JSON.stringify({ action: 'set_status', availability_status: 'low_stock', product_ids: [4, 9] }) });
+  assert.equal(selected.status, 200);
+  const selectedBody = await selected.json();
+  assert.equal(selectedBody.updated_count, 2);
+  const update = calls.findLast((call) => call.sql.includes('SET availability_status = COALESCE($1::varchar'));
+  assert.deepEqual(update.values, ['low_stock', 1, [4, 9]]);
+
+  const invalid = await fetch(base + '/api/shops/1/products/stock', { method: 'PATCH', headers, body: JSON.stringify({ action: 'set_status', availability_status: 'available', product_ids: [] }) });
+  assert.equal(invalid.status, 400);
 });
 
 test('expensive anonymous catalog routes are rate limited', async () => {

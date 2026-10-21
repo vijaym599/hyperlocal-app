@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, Clock3, Heart, Share2, Star, X, LocateFixed } from 'lucide-react';
+import { Search, MapPin, Store, Package, Navigation, RefreshCw, Layers, ChevronLeft, ChevronRight, Phone, MessageCircle, BadgeCheck, BellRing, Clock3, Heart, Share2, Star, X, LocateFixed } from 'lucide-react';
 import { productUrl, shopUrl } from '../publicUrls';
 import ProductSkeleton from './ProductSkeleton';
 import ProductImage from './ProductImage';
@@ -94,8 +94,9 @@ const formatDistanceText = (distanceKm) => {
 };
 
 const availabilityPresentation = (status) => ({
-  available: { label: 'Available', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  low_stock: { label: 'Low stock', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+  available: { label: 'Confirmed available', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  low_stock: { label: 'Confirmed low stock', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+  unconfirmed: { label: 'Check with shop', className: 'bg-slate-100 text-slate-700 border-slate-300' },
   out_of_stock: { label: 'Out of stock', className: 'bg-rose-50 text-rose-700 border-rose-200' }
 }[status] || { label: 'Availability not updated', className: 'bg-slate-50 text-slate-600 border-slate-200' });
 
@@ -192,6 +193,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
   const [requestMessage, setRequestMessage] = useState('');
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [stockAlerts, setStockAlerts] = useState({});
   const [reviewItem, setReviewItem] = useState(null);
   const [existingReviews, setExistingReviews] = useState([]);
   const [reviewSummary, setReviewSummary] = useState(null);
@@ -487,6 +489,19 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
       ? `Hi, is ${productName} available at ${shopName || 'your shop'}?`
       : `Hi, I found ${shopName || 'your shop'} on Nearbuy. Is it open now?`;
     window.open(`https://wa.me/${number}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const subscribeStockAlert = async (product) => {
+    if (!session?.token) { onRequireLogin?.(); return; }
+    setStockAlerts((current) => ({ ...current, [product.id]: { loading: true } }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/products/${product.id}/stock-alert`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}` } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to create a stock alert.');
+      setStockAlerts((current) => ({ ...current, [product.id]: { subscribed: true, message: 'Alert set' } }));
+    } catch (error) {
+      setStockAlerts((current) => ({ ...current, [product.id]: { error: error.message } }));
+    }
   };
 
   const handleProductRequest = async (event) => {
@@ -824,7 +839,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                           <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${availability.className}`}>
                             {availability.label}
                           </span>
-                          {availabilityUpdatedText && <span className="text-[10px] text-slate-400">{availabilityUpdatedText}</span>}
+                          {availabilityUpdatedText && <span className="text-[10px] text-slate-400">{p.availability_status === 'unconfirmed' ? `Last confirmed ${availabilityUpdatedText.replace(/^Updated\s*/i, '').toLowerCase()}` : availabilityUpdatedText.replace(/^Updated/i, 'Confirmed')}</span>}
                         </div>
 
                         <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
@@ -854,8 +869,10 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
                         <button onClick={() => shareProduct(p)} aria-label="Share product" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-500"><Share2 className="h-4 w-4" /></button>
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2">
+                        {p.availability_status !== 'available' && <button type="button" disabled={stockAlerts[p.id]?.loading || stockAlerts[p.id]?.subscribed} onClick={() => subscribeStockAlert(p)} className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 py-2.5 text-xs font-bold text-violet-700 disabled:opacity-60"><BellRing className="h-3.5 w-3.5" />{stockAlerts[p.id]?.loading ? 'Setting alert…' : stockAlerts[p.id]?.subscribed ? 'We’ll notify you' : 'Notify me when available'}</button>}
+                        {stockAlerts[p.id]?.error && <p className="col-span-2 text-center text-[10px] font-semibold text-rose-600">{stockAlerts[p.id].error}</p>}
                         {p.shop_phone && <button onClick={() => handleCall(p.shop_phone, p.shop_id, p.id)} className="flex items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3.5 w-3.5" /> Call</button>}
-                        {p.shop_whatsapp_number && <button onClick={() => handleWhatsApp(p.shop_whatsapp_number, p.name, p.shop_name, p.shop_id, p.id)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>}
+                        {p.shop_whatsapp_number && <button onClick={() => handleWhatsApp(p.shop_whatsapp_number, p.name, p.shop_name, p.shop_id, p.id)} className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"><MessageCircle className="h-3.5 w-3.5" /> Check stock</button>}
                         <button onClick={() => handleGetDirections(p.shop_lat, p.shop_lng, p.shop_name, p.shop_address, p.shop_id, p.id)} className="col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"><Navigation className="h-3.5 w-3.5" /> Get Directions</button>
                       </div>
                     </div>
@@ -957,7 +974,7 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
               <button type="button" aria-label="Close product details" onClick={() => setSelectedProduct(null)} className="min-h-10 min-w-10 shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
             <ProductImage product={selectedProduct} className="mt-4 h-52 w-full rounded-xl" />
-            <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${availabilityPresentation(selectedProduct.availability_status).className}`}>{availabilityPresentation(selectedProduct.availability_status).label}</span><RatingBadge rating={selectedProduct.product_average_rating} count={selectedProduct.product_review_count} label="Product rating" />{selectedProduct.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified shop</span>}</div>
+            <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${availabilityPresentation(selectedProduct.availability_status).className}`}>{availabilityPresentation(selectedProduct.availability_status).label}</span>{formatUpdatedAt(selectedProduct.availability_updated_at) && <span className="text-xs text-slate-500">{selectedProduct.availability_status === 'unconfirmed' ? `Last confirmed ${formatUpdatedAt(selectedProduct.availability_updated_at).replace(/^Updated\s*/i, '').toLowerCase()}` : formatUpdatedAt(selectedProduct.availability_updated_at).replace(/^Updated/i, 'Confirmed')}</span>}<RatingBadge rating={selectedProduct.product_average_rating} count={selectedProduct.product_review_count} label="Product rating" />{selectedProduct.shop_is_verified && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"><BadgeCheck className="h-3.5 w-3.5" /> Verified shop</span>}</div>
             {selectedProduct.brand && <p className="mt-4 text-sm font-semibold text-slate-700">{selectedProduct.brand}</p>}
             {selectedProduct.description && <p className="mt-2 text-sm leading-6 text-slate-600">{selectedProduct.description}</p>}
             <form onSubmit={submitReview} className="hidden">
@@ -968,8 +985,9 @@ const NearbySearch = ({ session, onRequireLogin, onOpenShop }) => {
             </form>
             <div className="mt-5 rounded-xl bg-slate-50 p-3"><button type="button" onClick={() => openShopCatalog(selectedProduct)} className="inline-flex items-center gap-1 font-bold text-slate-800 transition hover:text-emerald-700 hover:underline"><Store className="h-4 w-4" />{selectedProduct.shop_name || 'Local Shop'}</button><p className="mt-1 text-sm text-slate-500">{selectedProduct.shop_address}</p></div>
             <div className="mt-4 grid grid-cols-2 gap-2">
+              {selectedProduct.availability_status !== 'available' && <button type="button" disabled={stockAlerts[selectedProduct.id]?.loading || stockAlerts[selectedProduct.id]?.subscribed} onClick={() => subscribeStockAlert(selectedProduct)} className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 py-2.5 text-sm font-bold text-violet-700 disabled:opacity-60"><BellRing className="h-4 w-4" />{stockAlerts[selectedProduct.id]?.loading ? 'Setting alert…' : stockAlerts[selectedProduct.id]?.subscribed ? 'We’ll notify you' : 'Notify me when available'}</button>}
               {selectedProduct.shop_phone && <button onClick={() => handleCall(selectedProduct.shop_phone, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-slate-300 py-2.5 text-sm font-semibold text-slate-700"><Phone className="mr-1 inline h-4 w-4" />Call</button>}
-              {selectedProduct.shop_whatsapp_number && <button onClick={() => handleWhatsApp(selectedProduct.shop_whatsapp_number, selectedProduct.name, selectedProduct.shop_name, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-700"><MessageCircle className="mr-1 inline h-4 w-4" />WhatsApp</button>}
+              {selectedProduct.shop_whatsapp_number && <button onClick={() => handleWhatsApp(selectedProduct.shop_whatsapp_number, selectedProduct.name, selectedProduct.shop_name, selectedProduct.shop_id, selectedProduct.id)} className="rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-sm font-semibold text-emerald-700"><MessageCircle className="mr-1 inline h-4 w-4" />Check stock</button>}
               <button onClick={() => handleGetDirections(selectedProduct.shop_lat, selectedProduct.shop_lng, selectedProduct.shop_name, selectedProduct.shop_address, selectedProduct.shop_id, selectedProduct.id)} className="col-span-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white"><Navigation className="mr-1 inline h-4 w-4" />Get Directions</button>
             </div>
           </div>
