@@ -16,7 +16,7 @@ const { mountAccount } = require('./account');
 const { getPromotion, getShopPromotion, promotedSubscriptionTerms, claimPromotionRedemption } = require('./subscriptionPromotions');
 const { mountCustomerAssistant } = require('./customerAssistant');
 const { mountSupportReports } = require('./supportReports');
-const { requestId, securityHeaders, securityEvent, notFound, handleError } = require('./security');
+const { requestId, securityHeaders, securityEvent, adminAudit, notFound, handleError } = require('./security');
 const { PASSWORD_REQUIREMENT, isUsablePasswordInput, isStrongPassword } = require('./passwordPolicy');
 
 const app = express();
@@ -29,6 +29,7 @@ app.disable('x-powered-by');
 app.set('trust proxy', trustProxy(process.env.TRUST_PROXY));
 app.use(requestId);
 app.use(securityHeaders);
+app.use(adminAudit(pool));
 
 app.get('/api/health', async (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -63,6 +64,9 @@ const rateLimit = (limit, windowMs, scope = '') => (req, res, next) => {
   return next();
 };
 
+// A broad ceiling protects authenticated and less frequently used API routes;
+// tighter per-feature limits below still apply to abuse-prone operations.
+app.use('/api', rateLimit(600, 15 * 60 * 1000, 'api-global'));
 app.use('/api/auth', rateLimit(20, 15 * 60 * 1000));
 mountCustomerAssistant(app, pool, rateLimit(20, 10 * 60 * 1000, 'customer-assistant'));
 mountSupportReports(app, pool, authenticate, rateLimit);
@@ -109,7 +113,16 @@ const externalHttpUrl = (value) => {
 const validImageValue = (value) => {
   if (value == null || value === '') return true;
   if (typeof value !== 'string') return false;
-  if (value.startsWith('data:')) return /^data:image\/(?:png|jpe?g|webp);base64,/i.test(value) && value.length <= 1_700_000;
+  if (value.startsWith('data:')) {
+    const match = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(value);
+    if (!match) return false;
+    const bytes = Buffer.from(match[2], 'base64');
+    if (!bytes.length || bytes.length > 1_250_000 || bytes.toString('base64').replace(/=+$/, '') !== match[2].replace(/=+$/, '')) return false;
+    const declaredType = match[1].toLowerCase();
+    if (declaredType === 'png') return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    if (declaredType === 'jpg' || declaredType === 'jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    return bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
+  }
   return value.length <= 2048 && externalHttpUrl(value) !== undefined;
 };
 const optionalText = (value, max) => value == null || (typeof value === 'string' && value.length <= max);

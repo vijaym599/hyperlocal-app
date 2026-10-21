@@ -45,6 +45,27 @@ const securityEvent = (req, event, detail = {}) => {
   }));
 };
 
+// Record successful, state-changing administrator actions without persisting
+// request bodies, credentials, query strings, or other potentially sensitive
+// input. This is mounted before routes so it also covers admin routes declared
+// by feature modules.
+const adminAudit = (pool) => (req, res, next) => {
+  if (!req.path.startsWith('/api/admin/') || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+
+  res.once('finish', () => {
+    if (res.statusCode < 200 || res.statusCode >= 400 || !Number.isSafeInteger(req.user?.userId)) return;
+    const routePath = typeof req.route?.path === 'string' ? req.route.path : req.path;
+    const targetId = Object.values(req.params || {}).find((value) => /^[1-9]\d*$/.test(String(value))) || null;
+    void pool.query(
+      `INSERT INTO admin_audit_logs
+        (actor_user_id,request_id,method,route_path,status_code,target_id,ip_address,user_agent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [req.user.userId, req.requestId, req.method, routePath, res.statusCode, targetId, req.ip, String(req.get('user-agent') || '').slice(0, 500) || null]
+    ).catch((error) => console.error(`Admin audit write failed [${req.requestId}]:`, error.message));
+  });
+  return next();
+};
+
 const notFound = (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'API route not found.', request_id: req.requestId });
   return res.status(404).json({ error: 'Page not found.', request_id: req.requestId });
@@ -60,4 +81,4 @@ const handleError = (error, req, res, next) => {
   return res.status(500).json({ error: 'An unexpected server error occurred.', request_id: req.requestId });
 };
 
-module.exports = { requestId, securityHeaders, securityEvent, notFound, handleError };
+module.exports = { requestId, securityHeaders, securityEvent, adminAudit, notFound, handleError };

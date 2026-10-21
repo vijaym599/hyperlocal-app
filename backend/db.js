@@ -147,6 +147,23 @@ const initDb = async () => {
       CREATE INDEX IF NOT EXISTS user_activities_user_created_idx
         ON user_activities (user_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        request_id UUID NOT NULL,
+        method VARCHAR(10) NOT NULL CHECK (method IN ('POST','PUT','PATCH','DELETE')),
+        route_path VARCHAR(255) NOT NULL,
+        status_code SMALLINT NOT NULL CHECK (status_code BETWEEN 200 AND 399),
+        target_id VARCHAR(64),
+        ip_address INET,
+        user_agent VARCHAR(500),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS admin_audit_logs_actor_created_idx
+        ON admin_audit_logs (actor_user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx
+        ON admin_audit_logs (created_at DESC);
+
       CREATE TABLE IF NOT EXISTS shop_notifications (
         id BIGSERIAL PRIMARY KEY,
         shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,

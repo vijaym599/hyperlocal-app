@@ -18,7 +18,7 @@ This repository was reviewed against the OWASP Top 10:2025 as a risk-based sourc
 | A06 Insecure Design | Verified payment actions are blocked in production until a gateway exists, subscription promotion redemption is single-use and concurrency-safe, bounded catalog responses, and explicit role separation. |
 | A07 Authentication Failures | Password login, rate limits, generic credential errors, bounded strong passwords, purpose-bound SMS OTP for signup and password recovery/change, and all-session revocation. Phone changes require the current password plus a one-time SMS token, revoke every session, and have a 30-day cooldown. Legacy plaintext password acceptance was removed. |
 | A08 Software or Data Integrity Failures | Server-side entitlement decisions, payment references are not trusted in production, promotion audit/redemption records, admin complaint audit events, and locked dependency installs. |
-| A09 Logging and Alerting Failures | Structured security events for invalid/missing authentication and rate-limit violations, request correlation IDs, and sanitized server errors. Production hosting must alert on repeated events and 5xx rates. |
+| A09 Logging and Alerting Failures | Structured security events for invalid/missing authentication and rate-limit violations, request correlation IDs, sanitized server errors, and database-backed audit records for successful admin mutations. Production hosting must alert on repeated events and 5xx rates. |
 | A10 Mishandling Exceptional Conditions | Central malformed JSON, oversized body, 404 and unexpected-error handling; transaction rollback paths; provider timeouts; graceful shutdown; and bounded request/catalog sizes. |
 
 ## Required production operations

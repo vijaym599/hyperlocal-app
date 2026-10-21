@@ -268,6 +268,7 @@ test('product create and edit reject blank, malformed and oversized prices', asy
   assert.equal((await update({ name: 'Rice', price: 10, description: 'x'.repeat(2001) })).status, 400);
   assert.equal((await update({ name: 'Rice', price: 10, image_url: 'javascript:alert(1)' })).status, 400);
   assert.equal((await update({ name: 'Rice', price: 10, image_url: 'data:text/html;base64,PHNjcmlwdD4=' })).status, 400);
+  assert.equal((await update({ name: 'Rice', price: 10, image_url: 'data:image/png;base64,PHNjcmlwdD4=' })).status, 400);
 });
 
 test('shop contact requires call or WhatsApp and allows either number to be cleared', async () => {

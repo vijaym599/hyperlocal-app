@@ -4,7 +4,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const authenticate = require('../middleware/auth');
 const { isStrongPassword, isUsablePasswordInput } = require('../passwordPolicy');
-const { requestId, securityHeaders, notFound, handleError } = require('../security');
+const { requestId, securityHeaders, adminAudit, notFound, handleError } = require('../security');
 
 async function withServer(app, run) {
   const server = app.listen(0, '127.0.0.1');
@@ -38,4 +38,32 @@ test('JWT authentication accepts only HS256 and password inputs are bounded', as
   });
   assert.equal(isStrongPassword('StrongPass1'), true); assert.equal(isStrongPassword('passwordonly'), false); assert.equal(isStrongPassword('short1'), false);
   assert.equal(isUsablePasswordInput('x'.repeat(73)), false); assert.equal(isUsablePasswordInput('x'.repeat(72)), true);
+});
+
+test('successful admin mutations are audit logged without request data', async () => {
+  const writes = [];
+  const pool = { query: async (sql, values) => { writes.push({ sql, values }); return { rows: [] }; } };
+  const app = express();
+  app.use(express.json()); app.use(requestId); app.use(adminAudit(pool));
+  app.patch('/api/admin/shops/:shopId/open-status', (req, res) => {
+    req.user = { userId: 9 };
+    res.json({ received_secret: req.body.secret });
+  });
+  app.patch('/api/admin/failure', (req, res) => { req.user = { userId: 9 }; res.status(400).json({ error: 'bad' }); });
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/admin/shops/12/open-status?token=hidden`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: 'never-log-me' }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await fetch(`${base}/api/admin/failure`, { method: 'PATCH' })).status, 400);
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /INSERT INTO admin_audit_logs/);
+  assert.equal(writes[0].values[0], 9);
+  assert.equal(writes[0].values[2], 'PATCH');
+  assert.equal(writes[0].values[3], '/api/admin/shops/:shopId/open-status');
+  assert.equal(writes[0].values[5], '12');
+  assert.equal(JSON.stringify(writes[0]).includes('never-log-me'), false);
+  assert.equal(JSON.stringify(writes[0]).includes('hidden'), false);
 });
